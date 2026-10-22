@@ -15,6 +15,7 @@
   --radius: 8px;
 }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { margin: 0; background: var(--canvas); color: var(--ink); font: 16px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
 button, input, select, summary, textarea { font: inherit; }
 button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
@@ -126,10 +127,12 @@ textarea { resize: vertical; }
   .category-group { flex: 1; min-width: 180px; }
 }
 @media (max-width: 560px) {
+  input, select, textarea { font-size: 16px; }
   .edit-grid { grid-template-columns: minmax(0, 1fr); }
-  .topbar { height: 60px; padding: 0 20px; }
-  main { padding: 16px 20px 24px; }
-  h1 { font-size: 24px; }
+  .topbar { height: 56px; padding: 0 16px; }
+  main { padding: 16px 16px 24px; }
+  h1 { font-size: 22px; }
+  .auth-panel { margin: 24px auto; }
   .intro { margin-bottom: 16px; }
   .summary { display: block; padding: 12px 0 16px; margin-bottom: 20px; }
   .totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -159,7 +162,7 @@ textarea { resize: vertical; }
   .pagination button { padding: 10px 8px; }
   #categories { display: block; }
   .category-group { margin-top: 20px; }
-  dialog { padding: 20px; }
+  dialog { padding: 20px; max-height: 85dvh; }
   dl { grid-template-columns: 72px 1fr; font-size: 13px; gap: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

@@ -179,7 +179,7 @@ function showAuth(setup, message = '') {
   password.autocomplete = setup ? 'new-password' : 'current-password';
   document.querySelector('#auth-confirm').required = setup;
   document.querySelector('#auth-error').textContent = message;
-  password.focus();
+  if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) password.focus();
 }
 
 async function post(path, body) {
