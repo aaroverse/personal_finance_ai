@@ -6,6 +6,7 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+*.web-auth.json
 data/
 dist/
 build/

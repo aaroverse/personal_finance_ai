@@ -29,7 +29,7 @@ def build_application(bot_token: str, service: FinanceService) -> Application:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("recent", recent))
-    application.add_handler(CallbackQueryHandler(review_action, pattern=r"^(confirm|edit|cancel):\d+$"))
+    application.add_handler(CallbackQueryHandler(review_action, pattern=r"^(confirm|edit|cancel):\d+(?::[a-f0-9]{16})?$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, capture_expense))
     application.add_error_handler(log_error)
     return application
@@ -84,7 +84,7 @@ async def capture_expense(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             draft = await service.revise_expense(user.id, int(editing_draft_id), message.text)
             context.user_data.pop(EDITING_DRAFT_KEY, None)
-        await message.reply_text(_format_draft(draft), reply_markup=_review_keyboard(draft.id))
+        await message.reply_text(_format_draft(draft), reply_markup=_review_keyboard(draft))
     except UnauthorizedUserError:
         await _reply_private(update)
     except DraftNotPendingError:
@@ -107,27 +107,31 @@ async def review_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text("这是私人财务机器人。你没有访问权限。")
         return
 
-    action, raw_draft_id = query.data.split(":", maxsplit=1)
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("这张旧审核卡片已过期，请到网页查看最新草稿后审核。")
+        return
+    action, raw_draft_id, revision = parts
     draft_id = int(raw_draft_id)
     try:
         if action == "confirm":
-            transaction = service.confirm(user.id, draft_id)
+            transaction = service.confirm(user.id, draft_id, revision)
             context.user_data.pop(EDITING_DRAFT_KEY, None)
             await query.edit_message_text(_format_saved(transaction))
         elif action == "edit":
-            service.prepare_edit(user.id, draft_id)
+            service.prepare_edit(user.id, draft_id, revision)
             context.user_data[EDITING_DRAFT_KEY] = draft_id
             await query.edit_message_text(
                 "请重新发一条完整描述，我会更新这份草稿。\n"
                 "例如：昨天在 FairPrice 买菜 S$42.80，用 OCBC 卡。"
             )
         else:
-            service.cancel(user.id, draft_id)
+            service.cancel(user.id, draft_id, revision)
             context.user_data.pop(EDITING_DRAFT_KEY, None)
             await query.edit_message_text("已取消，没有写入账本。")
     except DraftNotPendingError:
         context.user_data.pop(EDITING_DRAFT_KEY, None)
-        await query.edit_message_text("这份草稿已经处理过或不属于你。")
+        await query.edit_message_text("这份草稿已更新、已处理或不属于你。请到网页查看最新状态。")
 
 
 async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -175,14 +179,15 @@ async def _reply_private(update: Update) -> None:
         await message.reply_text("这是私人财务机器人。你没有访问权限。")
 
 
-def _review_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+def _review_keyboard(draft: DraftRecord) -> InlineKeyboardMarkup:
+    suffix = f"{draft.id}:{draft.revision[:16]}"
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("✅ 确认", callback_data=f"confirm:{draft_id}"),
-                InlineKeyboardButton("✏️ 修改", callback_data=f"edit:{draft_id}"),
+                InlineKeyboardButton("✅ 确认", callback_data=f"confirm:{suffix}"),
+                InlineKeyboardButton("✏️ 修改", callback_data=f"edit:{suffix}"),
             ],
-            [InlineKeyboardButton("❌ 取消", callback_data=f"cancel:{draft_id}")],
+            [InlineKeyboardButton("❌ 取消", callback_data=f"cancel:{suffix}")],
         ]
     )
 

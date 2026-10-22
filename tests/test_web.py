@@ -28,6 +28,7 @@ def add(repo, owner=42, amount="0.10", currency="SGD", category="dining", mercha
 def ledger(tmp_path):
     repo = FinanceRepository(tmp_path / "finance.db")
     repo.initialize()
+    repo.prepare_web_edits()
     return repo, LedgerReader(tmp_path / "finance.db", 42)
 
 
@@ -101,6 +102,9 @@ def test_http_does_not_serve_files_or_allow_cross_site_access(ledger):
     thread.start()
     try:
         with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False) as client:
+            assert client.get('/api/ledger').status_code == 401
+            client.headers['Origin'] = f"http://127.0.0.1:{server.server_port}"
+            assert client.post('/api/setup', json={'password': 'test-password-1234'}).status_code == 200
             response = client.get("/api/ledger?month=")
             assert response.status_code == 200
             assert response.headers["cache-control"] == "no-store"
@@ -110,7 +114,7 @@ def test_http_does_not_serve_files_or_allow_cross_site_access(ledger):
             assert client.get("/data/finance.db").status_code == 404
             assert client.get("/", headers={"Host": "evil.example"}).status_code == 403
             assert client.get("/api/ledger", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
-            assert client.post("/api/ledger").status_code == 501
+            assert client.post("/api/ledger", json={}).status_code == 403
             assert "textContent" in client.get("/app.js").text
             assert "innerHTML" not in client.get("/app.js").text
         assert repo.count_transactions() == 1

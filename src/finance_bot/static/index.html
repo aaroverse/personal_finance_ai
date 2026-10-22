@@ -11,7 +11,17 @@
 <body>
   <header class="topbar"><a class="brand" href="/">Personal Finance</a><span class="local"><i aria-hidden="true"></i> 私人账本</span></header>
   <main>
-    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button></section>
+    <section id="auth-panel" class="auth-panel" hidden aria-labelledby="auth-title">
+      <h1 id="auth-title">登录账本</h1><p id="auth-description" class="muted"></p>
+      <form id="auth-form">
+        <label for="auth-password">页面密码<input id="auth-password" type="password" required maxlength="128" autocomplete="current-password" aria-describedby="auth-error"></label>
+        <label for="auth-confirm" id="auth-confirm-label" hidden>再次输入密码<input id="auth-confirm" type="password" maxlength="128" autocomplete="new-password" aria-describedby="auth-error"></label>
+        <p id="auth-error" class="form-error" role="alert"></p>
+        <button id="auth-submit" type="submit" class="primary">登录</button>
+      </form>
+    </section>
+    <div id="dashboard" hidden>
+    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
     <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
     <div id="content" hidden>
       <section class="summary" aria-label="已确认消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>按当前筛选分别汇总各币种，待确认、转账和取现不计入消费。</p></details></section>
@@ -31,7 +41,7 @@
             </div>
           </form>
           <div class="section-heading"><h2 id="ledger-heading" class="sr-only">交易记录</h2><div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button></div><span id="record-count" class="muted"></span></div>
-          <p id="pending-note" class="notice" hidden>待确认记录请回 Telegram 确认或取消。</p>
+          <p id="pending-note" class="notice" hidden>点击一笔草稿，检查后确认入账或取消。</p>
           <div class="table-head" aria-hidden="true"><span>交易</span><span>分类与账户</span><span>金额</span></div>
           <div id="records"></div>
           <div class="pagination"><button type="button" id="previous" class="quiet">上一页</button><span id="page-label"></span><button type="button" id="next" class="quiet">下一页</button></div>
@@ -40,7 +50,26 @@
       </div>
     </div>
     <footer><span id="updated"></span></footer>
+    </div>
   </main>
-  <dialog id="detail"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl><p class="detail-note">待确认记录请在 Telegram 审核。</p></dialog>
+  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl>
+    <form id="edit-form" class="edit-form" hidden>
+      <label for="edit-merchant">商户或消费描述<input id="edit-merchant" name="merchant" required maxlength="120" aria-describedby="error-merchant"><span id="error-merchant" class="field-error"></span></label>
+      <div class="edit-grid">
+        <label for="edit-date">消费日期<input id="edit-date" name="transaction_date" type="date" required aria-describedby="error-transaction_date"><span id="error-transaction_date" class="field-error"></span></label>
+        <label for="edit-amount">金额<input id="edit-amount" name="amount" inputmode="decimal" required pattern="[0-9]+(\.[0-9]{1,2})?" aria-describedby="error-amount"><span id="error-amount" class="field-error"></span></label>
+        <label for="edit-currency">币种<input id="edit-currency" name="currency" required minlength="3" maxlength="3" pattern="[A-Za-z]{3}" aria-describedby="error-currency"><span id="error-currency" class="field-error"></span></label>
+        <label for="edit-category">分类<select id="edit-category" name="category" required aria-describedby="error-category"></select><span id="error-category" class="field-error"></span></label>
+      </div>
+      <label for="edit-account">付款账户<input id="edit-account" name="payment_account" list="account-suggestions" maxlength="80" placeholder="例如 SG UOB 信用卡" aria-describedby="error-payment_account"><span id="error-payment_account" class="field-error"></span></label><datalist id="account-suggestions"></datalist>
+      <label for="edit-note">备注<textarea id="edit-note" name="note" rows="2" maxlength="300" aria-describedby="error-note"></textarea><span id="error-note" class="field-error"></span></label>
+      <div class="original-message"><span class="muted">原始 Telegram 描述（保留不变）</span><p id="edit-source"></p></div>
+      <div class="dialog-actions"><button id="edit-save" class="primary" type="submit">保存修改</button><button id="edit-cancel" class="quiet" type="button">返回详情</button></div>
+    </form>
+    <p id="detail-error" class="form-error" role="alert"></p>
+    <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button">修改记录</button><button id="confirm-record" class="primary" type="button" hidden>确认入账</button><button id="cancel-record" class="quiet" type="button" hidden>取消草稿</button></div>
+    <section id="review-check" class="notice" hidden><p id="review-message"></p><div class="dialog-actions"><button id="review-submit" class="primary" type="button">确定</button><button id="review-back" class="quiet" type="button">返回</button></div></section>
+    <p class="detail-note">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。</p>
+  </dialog>
 </body>
 </html>

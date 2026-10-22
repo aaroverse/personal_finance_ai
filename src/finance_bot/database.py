@@ -1,6 +1,8 @@
 # SQLite에서 검토 초안과 확정 거래를 원자적으로 저장합니다.
 
 import sqlite3
+import hashlib
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +14,16 @@ class DraftNotPendingError(RuntimeError):
     """Raised when a closed or missing draft is changed."""
 
 
+class RecordConflictError(DraftNotPendingError):
+    """A browser action was based on an older version of the record."""
+
+
+def record_revision(row: sqlite3.Row | dict) -> str:
+    status = row["status"] if "status" in row.keys() else "confirmed"
+    value = row["expense_json"] + "\n" + row["source_text"] + "\n" + status
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class DraftRecord:
     id: int
@@ -21,6 +33,10 @@ class DraftRecord:
     status: str
     created_at: str
     updated_at: str
+
+    @property
+    def revision(self) -> str:
+        return record_revision({"expense_json": self.expense.model_dump_json(), "source_text": self.source_text, "status": self.status})
 
 
 @dataclass(frozen=True)
@@ -68,6 +84,68 @@ class FinanceRepository:
                 """
             )
 
+    def prepare_web_edits(self) -> None:
+        """Back up the existing ledger before adding the backwards-compatible audit table."""
+        with closing(self._connect()) as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_edits'"
+            ).fetchone()
+            if exists:
+                return
+            backup_dir = self._path.parent / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+            backup_path = backup_dir / f"{self._path.stem}-before-web-edits-{stamp}.db"
+            with closing(sqlite3.connect(backup_path)) as backup:
+                connection.backup(backup)
+            backup_path.chmod(0o600)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS ledger_edits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_type TEXT NOT NULL CHECK(record_type IN ('drafts','transactions')),
+                    record_id INTEGER NOT NULL,
+                    telegram_user_id INTEGER NOT NULL,
+                    previous_json TEXT NOT NULL,
+                    updated_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            connection.commit()
+
+    def edit_record(
+        self, record_type: str, record_id: int, owner: int,
+        expense: ExpenseExtraction, revision: str,
+    ) -> str:
+        if record_type not in {"drafts", "transactions"}:
+            raise ValueError("Invalid record type")
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                f"SELECT * FROM {record_type} WHERE id=? AND telegram_user_id=?",
+                (record_id, owner),
+            ).fetchone()
+            self._check_revision(row, revision)
+            updated = expense.model_dump_json()
+            connection.execute(
+                f"UPDATE {record_type} SET expense_json=? WHERE id=? AND telegram_user_id=?",
+                (updated, record_id, owner),
+            )
+            if record_type == "drafts":
+                connection.execute("UPDATE drafts SET updated_at=? WHERE id=?", (_utc_now(), record_id))
+            connection.execute(
+                "INSERT INTO ledger_edits(record_type,record_id,telegram_user_id,previous_json,updated_json,created_at) VALUES(?,?,?,?,?,?)",
+                (record_type, record_id, owner, row["expense_json"], updated, _utc_now()),
+            )
+            row = connection.execute(f"SELECT * FROM {record_type} WHERE id=?", (record_id,)).fetchone()
+            return record_revision(row)
+
+    @staticmethod
+    def _check_revision(row: sqlite3.Row | None, revision: str | None) -> None:
+        if row is None or ("status" in row.keys() and row["status"] != "pending"):
+            raise DraftNotPendingError("Record is unavailable or already processed.")
+        if revision is not None and (len(revision) not in {16, 64} or record_revision(row)[:len(revision)] != revision):
+            raise RecordConflictError("Record changed since it was displayed.")
+
     def create_draft(
         self, telegram_user_id: int, source_text: str, expense: ExpenseExtraction
     ) -> DraftRecord:
@@ -97,9 +175,15 @@ class FinanceRepository:
         telegram_user_id: int,
         source_text: str,
         expense: ExpenseExtraction,
+        revision: str | None = None,
     ) -> DraftRecord:
         now = _utc_now()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM drafts WHERE id=? AND telegram_user_id=?", (draft_id, telegram_user_id)
+            ).fetchone()
+            self._check_revision(row, revision)
             cursor = connection.execute(
                 """
                 UPDATE drafts
@@ -112,9 +196,14 @@ class FinanceRepository:
                 raise DraftNotPendingError("Draft is not pending or does not belong to this user.")
         return self.get_draft(draft_id)
 
-    def cancel_draft(self, draft_id: int, telegram_user_id: int) -> DraftRecord:
+    def cancel_draft(self, draft_id: int, telegram_user_id: int, revision: str | None = None) -> DraftRecord:
         now = _utc_now()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM drafts WHERE id=? AND telegram_user_id=?", (draft_id, telegram_user_id)
+            ).fetchone()
+            self._check_revision(row, revision)
             cursor = connection.execute(
                 """
                 UPDATE drafts SET status = 'cancelled', updated_at = ?
@@ -126,7 +215,7 @@ class FinanceRepository:
                 raise DraftNotPendingError("Draft is not pending or does not belong to this user.")
         return self.get_draft(draft_id)
 
-    def confirm_draft(self, draft_id: int, telegram_user_id: int) -> TransactionRecord:
+    def confirm_draft(self, draft_id: int, telegram_user_id: int, revision: str | None = None) -> TransactionRecord:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -139,6 +228,7 @@ class FinanceRepository:
             ).fetchone()
             if row is None:
                 raise DraftNotPendingError("Draft is not pending or does not belong to this user.")
+            self._check_revision(row, revision)
 
             now = _utc_now()
             cursor = connection.execute(

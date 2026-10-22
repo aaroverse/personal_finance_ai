@@ -9,13 +9,18 @@ from contextlib import closing
 from datetime import datetime
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie, CookieError
+import hmac
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import ValidationError
 
 from .models import ExpenseExtraction
+from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
+from .web_auth import WebAuth, LoginError
 
 
 ASSETS = Path(__file__).parent / "static"
@@ -83,6 +88,7 @@ class LedgerReader:
                     expense = ExpenseExtraction.model_validate_json(row["expense_json"])
                     rows.append({
                         "id": row["id"], "state": status,
+                        "revision": record_revision(row),
                         "source_text": row["source_text"], "created_at": row["created_at"],
                         **expense.model_dump(mode="json"),
                     })
@@ -135,19 +141,42 @@ class LedgerReader:
         }
 
 
-def make_handler(reader: LedgerReader) -> type[BaseHTTPRequestHandler]:
+def make_handler(reader: LedgerReader, auth: WebAuth | None = None) -> type[BaseHTTPRequestHandler]:
+    auth = auth or WebAuth(reader.path.with_name(reader.path.name + ".web-auth.json"))
+    repository = FinanceRepository(reader.path)
+
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
+        def local_request(self) -> bool:
             # Reject cross-site requests and untrusted Host headers (including DNS rebinding).
             try:
                 host = urlsplit("//" + self.headers.get("Host", "")).hostname
             except ValueError:
                 host = None
             if host not in {"127.0.0.1", "localhost"} or self.headers.get("Sec-Fetch-Site") == "cross-site":
-                self.respond(403, b"Local access only", "text/plain")
+                self.json_response(403, {"error": "只允许本机同源访问。"})
+                return False
+            return True
+
+        def session_token(self) -> str:
+            try:
+                cookies = SimpleCookie(self.headers.get("Cookie", ""))
+                value = cookies.get("finance_session")
+                return value.value if value else ""
+            except CookieError:
+                return ""
+
+        def do_GET(self) -> None:
+            if not self.local_request():
                 return
             parsed = urlsplit(self.path)
+            csrf = auth.session(self.session_token())
+            if parsed.path == "/api/session":
+                self.json_response(200, {"authenticated": csrf is not None, "needs_setup": auth.needs_setup, "csrf": csrf})
+                return
             if parsed.path == "/api/ledger":
+                if csrf is None:
+                    self.json_response(401, {"error": "请先登录账本。"})
+                    return
                 try:
                     result = reader.read(parse_qs(parsed.query, keep_blank_values=True))
                     self.respond(200, json.dumps(result, ensure_ascii=False).encode(), "application/json")
@@ -163,11 +192,94 @@ def make_handler(reader: LedgerReader) -> type[BaseHTTPRequestHandler]:
             filename, content_type = files[parsed.path]
             self.respond(200, (ASSETS / filename).read_bytes(), content_type)
 
-        def respond(self, status: int, body: bytes, content_type: str) -> None:
+        def do_POST(self) -> None:
+            if not self.local_request():
+                return
+            if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+                self.json_response(403, {"error": "请求来源不正确，请重新打开页面。"})
+                return
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                self.json_response(415, {"error": "需要 JSON 请求。"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 32768:
+                    raise ValueError()
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError()
+            except (ValueError, UnicodeError):
+                self.json_response(400, {"error": "请求内容无效。"})
+                return
+            path = urlsplit(self.path).path
+            if path in {"/api/setup", "/api/login"}:
+                try:
+                    token, csrf = auth.login(body.get("password"), setup=path == "/api/setup")
+                    self.json_response(200, {"csrf": csrf}, cookie=f"finance_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200")
+                except LoginError as exc:
+                    self.json_response(400, {"error": str(exc)})
+                except (OSError, ValueError, KeyError):
+                    self.json_response(503, {"error": "无法读取或保存页面登录设置。"})
+                return
+            token = self.session_token()
+            csrf = auth.session(token)
+            if csrf is None:
+                self.json_response(401, {"error": "登录已过期，请重新登录。"})
+                return
+            if not hmac.compare_digest(csrf, self.headers.get("X-CSRF-Token", "")):
+                self.json_response(403, {"error": "安全凭证已失效，请刷新页面。"})
+                return
+            if path == "/api/logout":
+                auth.logout(token)
+                self.json_response(200, {"ok": True}, cookie="finance_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+                return
+            match = re.fullmatch(r"/api/(transactions|drafts)/([1-9]\d*)/(edit|confirm|cancel)", path)
+            if not match:
+                self.json_response(404, {"error": "操作不存在。"})
+                return
+            table, raw_id, action = match.groups()
+            revision = body.get("revision", "")
+            if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision):
+                self.json_response(400, {"error": "记录版本无效，请刷新后重试。"})
+                return
+            try:
+                if action == "edit":
+                    raw = body.get("expense")
+                    if not isinstance(raw, dict):
+                        raise ValueError()
+                    expense = ExpenseExtraction.model_validate({
+                        **raw, "confidence": 1, "needs_review": False, "ambiguities": [],
+                    })
+                    new_revision = repository.edit_record(table, int(raw_id), reader.owner, expense, revision)
+                    self.json_response(200, {"ok": True, "revision": new_revision})
+                elif table == "drafts":
+                    if action == "confirm":
+                        repository.confirm_draft(int(raw_id), reader.owner, revision)
+                    else:
+                        repository.cancel_draft(int(raw_id), reader.owner, revision)
+                    self.json_response(200, {"ok": True})
+                else:
+                    self.json_response(400, {"error": "已确认交易不能再次审核。"})
+            except ValidationError as exc:
+                fields = {str(error["loc"][0]): error["msg"] for error in exc.errors(include_input=False)}
+                self.json_response(422, {"error": "请检查标记的字段：金额需大于零且最多两位小数，其他字段需完整。", "fields": fields})
+            except (DraftNotPendingError, RecordConflictError):
+                self.json_response(409, {"error": "这笔记录已更新或已在 Telegram 处理。请关闭详情并刷新后重试。"})
+            except (ValueError, TypeError):
+                self.json_response(400, {"error": "请填写完整的交易资料。"})
+            except sqlite3.Error:
+                self.json_response(503, {"error": "暂时无法保存，请稍后重试。"})
+
+        def json_response(self, status: int, value: dict, cookie: str | None = None) -> None:
+            self.respond(status, json.dumps(value, ensure_ascii=False).encode(), "application/json", cookie)
+
+        def respond(self, status: int, body: bytes, content_type: str, cookie: str | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -182,7 +294,7 @@ def make_handler(reader: LedgerReader) -> type[BaseHTTPRequestHandler]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Private local read-only finance ledger")
+    parser = argparse.ArgumentParser(description="Private local finance ledger")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--user-id", type=int, default=None)
     args = parser.parse_args()
@@ -191,6 +303,7 @@ def main() -> None:
         reader = LedgerReader(settings.database_path, settings.owner(args.user_id), settings.app_timezone)
         if not reader.path.is_file():
             parser.error("Ledger not found. Run from the project folder after logging an expense.")
+        FinanceRepository(reader.path).prepare_web_edits()
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader))
     except (ValueError, OSError):
         parser.error("Check DATABASE_PATH, TELEGRAM_ALLOWED_USER_IDS, APP_TIMEZONE and port. For multiple owners, use --user-id.")
