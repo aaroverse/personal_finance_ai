@@ -1,9 +1,12 @@
 # 로컬 전용 읽기 전용 웹 장부와 정확한 통화별 집계를 제공합니다.
 
 import argparse
+import base64
+import binascii
 import json
 import re
 import sqlite3
+import subprocess
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime
@@ -21,6 +24,7 @@ from pydantic import ValidationError
 from .models import ExpenseExtraction
 from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
 from .web_auth import WebAuth, LoginError
+from .statements import MAX_UPLOAD_BYTES, preview_pdf, suggest_matches
 
 
 ASSETS = Path(__file__).parent / "static"
@@ -228,9 +232,19 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 self.json_response(415, {"error": "需要 JSON 请求。"})
                 return
+            path = urlsplit(self.path).path
+            statement_upload = path == '/api/statements/preview'
+            if statement_upload:
+                csrf = auth.session(self.session_token())
+                if csrf is None:
+                    self.json_response(401, {"error": "请先登录账本。"})
+                    return
+                if not hmac.compare_digest(csrf, self.headers.get('X-CSRF-Token', '')):
+                    self.json_response(403, {"error": "安全凭证已失效，请刷新页面。"})
+                    return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 32768:
+                if not 0 < length <= (MAX_UPLOAD_BYTES if statement_upload else 32768):
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
@@ -238,7 +252,6 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             except (ValueError, UnicodeError):
                 self.json_response(400, {"error": "请求内容无效。"})
                 return
-            path = urlsplit(self.path).path
             if path in {"/api/setup", "/api/login"}:
                 try:
                     token, csrf = auth.login(body.get("password"), setup=path == "/api/setup")
@@ -259,6 +272,19 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             if path == "/api/logout":
                 auth.logout(token)
                 self.json_response(200, {"ok": True}, cookie="finance_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+                return
+            if statement_upload:
+                try:
+                    encoded = body.get('pdf_base64')
+                    if not isinstance(encoded, str):
+                        raise ValueError('请选择 PDF 文件。')
+                    data = base64.b64decode(encoded, validate=True)
+                    preview = suggest_matches(preview_pdf(data), reader.path, reader.owner)
+                    self.json_response(200, preview)
+                except (binascii.Error, ValueError):
+                    self.json_response(422, {"error": "无法解析：请上传 6 MB 内、1–20 页、未加密的新加坡 UOB 信用卡原始 PDF。扫描件和其他格式暂不支持。"})
+                except (sqlite3.Error, OSError, subprocess.SubprocessError):
+                    self.json_response(503, {"error": "暂时无法处理账单，请稍后重试。"})
                 return
             match = re.fullmatch(r"/api/(transactions|drafts)/([1-9]\d*)/(edit|confirm|cancel)", path)
             if not match:

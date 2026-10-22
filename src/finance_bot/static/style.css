@@ -120,6 +120,20 @@ dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 textarea { resize: vertical; }
 .dialog-actions { margin-top: 20px; }
 #review-check .dialog-actions { margin-top: 12px; }
+.statement-panel { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
+.statement-panel > summary { min-height: 44px; padding: 10px 0; font-size: 14px; font-weight: 600; }
+.statement-panel > .muted { margin: 8px 0 20px; line-height: 1.8; }
+#statement-form { display: grid; gap: 16px; max-width: 520px; }
+#statement-status:not(:empty) { margin-top: 16px; }
+.statement-card { margin-top: 24px; }
+.statement-card > summary { min-height: 44px; padding: 12px 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.statement-row { border-bottom: 1px solid var(--line); padding: 16px 0; font-size: 14px; }
+.statement-row p { margin: 4px 0; overflow-wrap: anywhere; }
+.statement-row-header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.statement-row-header strong { min-width: 0; overflow-wrap: anywhere; }
+.statement-row-header .amount { flex-shrink: 0; }
+.statement-candidates { padding: 12px; margin: 12px 0 0; background: var(--control); border-radius: var(--radius); list-style: none; }
+.statement-candidates li + li { margin-top: 12px; }
 @media (max-width: 960px) {
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .breakdown { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }

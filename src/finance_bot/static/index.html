@@ -49,6 +49,17 @@
         <aside class="breakdown" aria-labelledby="breakdown-heading"><h2 id="breakdown-heading">分类支出</h2><div id="categories"></div></aside>
       </div>
     </div>
+    <details id="statement-panel" class="statement-panel">
+      <summary>信用卡账单 · UOB 新加坡</summary>
+      <p id="statement-help" class="muted">仅在你的 MBP 本机解析，不发送给 AI、不保存 PDF。当前为预览版，刷新页面会清除预览，不会修改账本。</p>
+      <form id="statement-form">
+        <label for="statement-file">单月信用卡 PDF<input id="statement-file" type="file" accept="application/pdf,.pdf" required aria-describedby="statement-help statement-error"></label>
+        <div class="page-actions"><button id="statement-submit" class="primary" type="submit">解析并预览</button><button id="statement-clear" class="quiet" type="button">清除预览</button></div>
+      </form>
+      <p id="statement-status" class="status" role="status"></p>
+      <p id="statement-error" class="form-error" role="alert"></p>
+      <div id="statement-preview" hidden></div>
+    </details>
     <footer><span id="updated"></span></footer>
     </div>
   </main>

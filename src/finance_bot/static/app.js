@@ -164,6 +164,7 @@ document.querySelector('#next').addEventListener('click', () => {if (page < page
 document.querySelector('#close-detail').addEventListener('click', () => document.querySelector('#detail').close());
 
 function showAuth(setup, message = '') {
+  clearStatementPreview();
   csrfToken = null;
   initialized = false;
   needsSetup = setup;
@@ -357,7 +358,108 @@ fetch('/api/session', {cache: 'no-store'}).then(response => {
 
 // Poll only the local ledger; never interrupt editing, details, focus, or an active request.
 setInterval(() => {
-  if (!initialized || !csrfToken || loading || filtersDirty || document.visibilityState !== 'visible') return;
+  if (!initialized || !csrfToken || loading || filtersDirty || statementBusy || document.visibilityState !== 'visible') return;
   if (document.querySelector('#detail').open || document.activeElement?.closest('form, dialog, #records')) return;
   load({automatic: true});
 }, 5000);
+
+let statementBusy = false;
+let statementGeneration = 0;
+const statementForm = document.querySelector('#statement-form');
+const statementPreview = document.querySelector('#statement-preview');
+function clearStatementPreview() {
+  statementGeneration++;
+  statementForm.reset();
+  statementPreview.replaceChildren();
+  statementPreview.hidden = true;
+  document.querySelector('#statement-error').textContent = '';
+  document.querySelector('#statement-status').textContent = '';
+  document.querySelector('#statement-file').removeAttribute('aria-invalid');
+}
+document.querySelector('#statement-clear').addEventListener('click', clearStatementPreview);
+document.querySelector('#statement-file').addEventListener('change', () => {
+  statementGeneration++;
+  statementPreview.replaceChildren();
+  statementPreview.hidden = true;
+  document.querySelector('#statement-error').textContent = '';
+  document.querySelector('#statement-status').textContent = '';
+  document.querySelector('#statement-file').removeAttribute('aria-invalid');
+});
+statementForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (statementBusy) return;
+  const file = document.querySelector('#statement-file').files[0];
+  const errorLine = document.querySelector('#statement-error');
+  const feedback = document.querySelector('#statement-status');
+  errorLine.textContent = '';
+  statementPreview.replaceChildren();
+  statementPreview.hidden = true;
+  if (!file || file.size > 6 * 1024 * 1024 || !file.name.toLowerCase().endsWith('.pdf')) {
+    errorLine.textContent = '请选择不超过 6 MB 的 PDF 文件。';
+    document.querySelector('#statement-file').setAttribute('aria-invalid', 'true');
+    return;
+  }
+  const generation = ++statementGeneration;
+  statementBusy = true;
+  document.querySelector('#statement-submit').disabled = true;
+  statementForm.setAttribute('aria-busy', 'true');
+  feedback.textContent = '正在本机解析，请稍候…';
+  try {
+    const encoded = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('无法读取文件，请重新选择。'));
+      reader.readAsDataURL(file);
+    });
+    if (generation !== statementGeneration) return;
+    const data = await post('/api/statements/preview', {pdf_base64: encoded});
+    if (generation !== statementGeneration) return;
+    renderStatement(data);
+    feedback.textContent = `账单日 ${data.statement_date} · ${data.cards.length} 张卡 · ${data.rows.length} 笔明细。预览完成，尚未写入账本。`;
+  } catch (error) {
+    if (generation === statementGeneration) {
+      feedback.textContent = '';
+      errorLine.textContent = error.message;
+    }
+  } finally {
+    statementBusy = false;
+    document.querySelector('#statement-submit').disabled = false;
+    statementForm.setAttribute('aria-busy', 'false');
+  }
+});
+function renderStatement(data) {
+  statementPreview.replaceChildren();
+  for (const warning of data.warnings) statementPreview.append(el('p', warning, 'notice'));
+  statementPreview.append(el('p', '候选仅供核对，不代表已匹配。相同金额可能对应多笔消费，也可能被多行推荐；商户名和你的描述都会保留。此版本还不能确认匹配或补录。', 'notice'));
+  for (const card of data.cards) {
+    const group = el('details', undefined, 'statement-card');
+    group.open = true;
+    group.append(el('summary', `${card.name} • ${card.last_four} · ${card.row_count} 笔`));
+    group.append(el('p', `上期余额 ${card.opening_balance ?? '未识别'} + 本期净变动 ${card.net_movement} = 本期余额 ${card.closing_balance ?? '未识别'} SGD`, 'muted'));
+    group.append(el('p', card.balance_ok ? '余额校验通过（不代表每一行已核对）' : `余额校验未通过 · 差额 ${card.difference ?? '未知'} SGD`, card.balance_ok ? 'muted' : 'notice'));
+    for (const row of data.rows.filter(item => item.card === card.account)) {
+      const line = el('article', undefined, 'statement-row');
+      const heading = el('div', undefined, 'statement-row-header');
+      heading.append(el('strong', row.merchant), el('span', `${money(row.signed_amount)} SGD`, 'amount'));
+      line.append(heading, el('p', `消费 ${row.transaction_date} · 入账 ${row.posting_date} · PDF 第 ${row.page} 页`, 'muted'));
+      if (row.original_currency) line.append(el('p', `原币 ${row.original_amount} ${row.original_currency}；对账使用 SGD 结算金额。`, 'muted'));
+      if (row.kind !== 'charge') {
+        line.append(el('p', row.kind === 'payment' ? '信用卡还款 · 非消费，不寻找消费匹配' : '贷记／退款 · 非新增消费，后续需核对原消费', 'muted'));
+      } else if (!row.candidate_count) {
+        line.append(el('p', '未找到候选 · 不代表漏记：请检查日期、金额和具体卡片。', 'muted'));
+      } else {
+        line.append(el('p', `${row.candidate_count} 笔可能对应的记账记录${row.candidate_count > 5 ? '（仅显示前 5 笔）' : ''}`, 'muted'));
+        const candidates = el('ul', undefined, 'statement-candidates');
+        for (const candidate of row.candidates) {
+          const item = el('li');
+          item.append(el('p', `#${candidate.id} · ${candidate.merchant}`), el('p', `${candidate.transaction_date} · ${candidate.account} · ${candidate.amount} SGD`, 'muted'), el('p', candidate.reason, 'muted'));
+          candidates.append(item);
+        }
+        line.append(candidates);
+      }
+      group.append(line);
+    }
+    statementPreview.append(group);
+  }
+  statementPreview.hidden = false;
+}
