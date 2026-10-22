@@ -1,0 +1,19 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+data/
+dist/
+build/
+*.egg-info/
+
+# Local Codex planning state
+task_plan.md
+findings.md
+progress.md
+checklist.md
+context-notes.md
