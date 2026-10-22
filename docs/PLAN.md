@@ -39,6 +39,8 @@
 
 通过 Tailscale Serve 提供私人 HTTPS 入口；限制到自己的设备／身份。实际验证手机流量访问、身份检查、服务重启和睡眠影响后，才宣告远程可用。
 
+账本已支持确切 HTTPS 地址、Tailscale 登录身份限制和远程 Secure Cookie；部署时需在 Tailscale 账号启用 Serve／HTTPS，并完成手机流量验证。默认仍只监听本机。
+
 ## 3. Statement 上传
 
 先支持一家银行的一份真实样本，再逐家扩展。通过页面选账户、上传、预览、修正、确认导入。Telegram 文件上传为可选后续入口。

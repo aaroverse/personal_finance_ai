@@ -120,11 +120,39 @@ python -m finance_bot.web --user-id 你的数字ID
 
 页面在前台时每 5 秒自动更新，不调用 AI。正在编辑筛选、查看详情或请求尚未完成时暂停，防止打断操作；手动刷新仍可使用。
 
-目前只允许本机访问。Tailscale 手机远程访问与 statement 上传会分阶段加入；不要直接把此本机服务端口暴露到公网。
+默认只允许本机访问。私人远程访问使用下述 Tailscale Serve 配置；不要直接把此本机服务端口暴露到公网。
 
 密码哈希位于数据库旁的 `finance.db.web-auth.json`（默认路径）。请保留该文件；它不含明文密码，且不会提交 Git。忘记密码时需在本机验证并处理重设，不提供通过网页绕过密码的入口。
 
 端口占用时可使用 `python -m finance_bot.web --port 8767`。
+
+## 6. 手机私人访问（Tailscale）
+
+MBP 和手机需要安装 Tailscale 并登录同一账号。本机先设置好账本密码。
+
+在数据库旁建立 `finance.db.remote.json`（默认 `data/finance.db.remote.json`，已被 Git 忽略）：
+
+```json
+{
+  "origin": "https://你的设备.你的网络.ts.net",
+  "tailscale_login": "你的Tailscale登录账号"
+}
+```
+
+填入 Tailscale 实际分配的完整地址和登录账号，不是示例文字。也可以通过 `WEB_PUBLIC_ORIGIN` 和 `WEB_TAILSCALE_LOGIN` 环境变量覆盖。
+
+重启账本服务后，配置只在私人网络内使用的 HTTPS 入口：
+
+```bash
+tailscale serve --bg http://127.0.0.1:8765
+tailscale serve status
+```
+
+如果显示 HTTPS 启用链接，打开后启用 Serve／HTTPS；不启用 Funnel（公网入口）。证书申请会将设备 DNS 名发布到证书透明度日志，账本数据不会因此公开。
+
+手机打开 Tailscale，访问 Serve 显示的 HTTPS 网址，用页面密码登录。账本会同时检查地址、Tailscale 账号和页面登录状态。请求经本机代理转发，Python 仍只监听 127.0.0.1。不要改为监听 0.0.0.0。
+
+手机关闭 Wi-Fi 后使用流量测试。MBP 需要持续唤醒、联网，Tailscale 和账本服务也需要运行；Serve 的后台设置不会自动启动 Python。停止这个入口可使用 `tailscale serve --https=443 off`，不会删除账目。
 
 ## 产品计划
 

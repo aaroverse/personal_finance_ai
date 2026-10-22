@@ -37,6 +37,14 @@ class WebSettings(BaseSettings):
     database_path: Path = Path("data/finance.db")
     telegram_allowed_user_ids: str
     app_timezone: str = "Asia/Singapore"
+    web_public_origin: str = ""
+    web_tailscale_login: str = ""
+
+    def remote_access(self) -> tuple[str, str]:
+        config_path = self.database_path.with_name(self.database_path.name + '.remote.json')
+        config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        return (self.web_public_origin or config.get('origin', ''),
+                self.web_tailscale_login or config.get('tailscale_login', ''))
 
     def owner(self, requested: int | None) -> int:
         try:
@@ -141,7 +149,14 @@ class LedgerReader:
         }
 
 
-def make_handler(reader: LedgerReader, auth: WebAuth | None = None) -> type[BaseHTTPRequestHandler]:
+def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_origin: str = '', tailscale_login: str = '') -> type[BaseHTTPRequestHandler]:
+    public_origin = public_origin.rstrip('/')
+    remote = urlsplit(public_origin)
+    if public_origin or tailscale_login:
+        if (remote.scheme != 'https' or not remote.hostname or not remote.hostname.endswith('.ts.net')
+                or remote.username or remote.password or remote.path or remote.query or remote.fragment
+                or remote.port not in {None, 443} or not tailscale_login):
+            raise ValueError('Remote access requires one exact Tailscale HTTPS origin and account login.')
     auth = auth or WebAuth(reader.path.with_name(reader.path.name + ".web-auth.json"))
     repository = FinanceRepository(reader.path)
 
@@ -149,11 +164,22 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None) -> type[Base
         def local_request(self) -> bool:
             # Reject cross-site requests and untrusted Host headers (including DNS rebinding).
             try:
-                host = urlsplit("//" + self.headers.get("Host", "")).hostname
+                host = self.headers.get("Host", "")
             except ValueError:
                 host = None
-            if host not in {"127.0.0.1", "localhost"} or self.headers.get("Sec-Fetch-Site") == "cross-site":
-                self.json_response(403, {"error": "只允许本机同源访问。"})
+            self.remote_request = bool(public_origin and host == remote.netloc)
+            local_hosts = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
+            if (host not in local_hosts and not self.remote_request) or self.headers.get("Sec-Fetch-Site") == "cross-site":
+                self.json_response(403, {"error": "访问地址或请求来源未获准。"})
+                return False
+            if self.remote_request and (
+                self.client_address[0] != '127.0.0.1'
+                or self.headers.get('Tailscale-User-Login', '').casefold() != tailscale_login.casefold()
+            ):
+                self.json_response(403, {"error": "只允许你的 Tailscale 账号访问。"})
+                return False
+            if self.remote_request and auth.needs_setup:
+                self.json_response(403, {"error": "请先在 MBP 本机设置账本密码。"})
                 return False
             return True
 
@@ -195,7 +221,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None) -> type[Base
         def do_POST(self) -> None:
             if not self.local_request():
                 return
-            if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+            expected_origin = public_origin if self.remote_request else "http://" + self.headers.get("Host", "")
+            if self.headers.get("Origin") != expected_origin:
                 self.json_response(403, {"error": "请求来源不正确，请重新打开页面。"})
                 return
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -279,6 +306,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None) -> type[Base
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             if cookie:
+                if getattr(self, 'remote_request', False):
+                    cookie += '; Secure'
                 self.send_header("Set-Cookie", cookie)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -304,7 +333,8 @@ def main() -> None:
         if not reader.path.is_file():
             parser.error("Ledger not found. Run from the project folder after logging an expense.")
         FinanceRepository(reader.path).prepare_web_edits()
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader))
+        origin, login = settings.remote_access()
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader, public_origin=origin, tailscale_login=login))
     except (ValueError, OSError):
         parser.error("Check DATABASE_PATH, TELEGRAM_ALLOWED_USER_IDS, APP_TIMEZONE and port. For multiple owners, use --user-id.")
     print(f"账本已启动：http://127.0.0.1:{server.server_port} （Control+C 停止）", flush=True)
