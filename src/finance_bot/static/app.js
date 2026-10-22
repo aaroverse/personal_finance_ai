@@ -42,19 +42,22 @@ async function load() {
     fillOptions('account', [...data.options.accounts, '__unknown__'], {'__unknown__': '未注明账户'});
     fillOptions('currency', data.options.currencies);
     fillOptions('category', Object.keys(categoryNames), categoryNames);
-    document.querySelector('#period-label').textContent = data.month ? `${data.month} · 已确认消费` : '全部月份 · 已确认消费';
+    document.querySelector('#period-label').textContent = data.month ? `${data.month.replace('-', ' 年 ')} 月已确认消费` : '全部月份的已确认消费';
+    const activeFilters = ['account', 'currency', 'category'].filter(name => form.elements[name].value).length;
+    document.querySelector('#filter-label').textContent = activeFilters ? `更多筛选 (${activeFilters})` : '更多筛选';
     const totals = document.querySelector('#totals');
     totals.replaceChildren();
-    for (const [currency, amount] of Object.entries(data.totals)) {
+    const sortedTotals = Object.entries(data.totals).sort(([a], [b]) => (a === 'SGD' ? -1 : b === 'SGD' ? 1 : a.localeCompare(b)));
+    for (const [currency, amount] of sortedTotals) {
       const block = el('div', undefined, 'money-block');
-      block.append(el('div', currency === 'SGD' ? '新加坡元 / SGD' : currency === 'MYR' ? '马来西亚令吉 / MYR' : currency, 'currency-label'));
+      block.append(el('div', currency === 'SGD' ? '新加坡元' : currency === 'MYR' ? '马来西亚令吉' : currency, 'currency-label'));
       const value = el('div', undefined, 'money');
       value.append(el('small', currency === 'SGD' ? 'S$' : currency === 'MYR' ? 'RM' : currency), document.createTextNode(money(amount)));
       block.append(value);
       totals.append(block);
     }
-    document.querySelector('#confirmed-tab').textContent = `已确认 · ${data.confirmed_count}`;
-    document.querySelector('#pending-tab').textContent = `待确认 · ${data.pending_count}`;
+    document.querySelector('#confirmed-tab').textContent = `已确认 ${data.confirmed_count}`;
+    document.querySelector('#pending-tab').textContent = `待确认 ${data.pending_count}`;
     document.querySelector('#confirmed-tab').setAttribute('aria-pressed', state === 'confirmed');
     document.querySelector('#pending-tab').setAttribute('aria-pressed', state === 'pending');
     document.querySelector('#pending-note').hidden = state !== 'pending';
@@ -65,7 +68,7 @@ async function load() {
       const button = el('button', undefined, 'transaction');
       button.type = 'button';
       const name = el('span');
-      name.append(el('strong', row.merchant), el('small', `${row.transaction_date} · #${row.id}`));
+      name.append(el('strong', row.merchant), el('small', row.transaction_date));
       const classification = el('span', undefined, 'classification');
       classification.append(el('span', categoryNames[row.category] || row.category, 'category-label'), el('small', row.payment_account || '未注明账户'));
       const amount = el('span', money(row.amount), 'amount');
@@ -76,7 +79,7 @@ async function load() {
     }
     if (!data.records.length) {
       const empty = el('div', undefined, 'empty');
-      empty.append(el('strong', state === 'pending' ? '这里没有待确认记录' : '还没有符合条件的记录'), el('span', '调整筛选，或到 Telegram 记录下一笔生活。'));
+      empty.append(el('strong', state === 'pending' ? '暂无待确认记录' : '暂无符合条件的记录'), el('span', '调整筛选，或到 Telegram 添加记录。'));
       records.append(empty);
     }
     const categories = document.querySelector('#categories');
@@ -99,8 +102,8 @@ async function load() {
     document.querySelector('#previous').disabled = page <= 1;
     document.querySelector('#next').disabled = page >= pages;
     document.querySelector('#page-label').textContent = `第 ${page} / ${pages} 页`;
-    document.querySelector('#updated').textContent = `更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN')} · 本机账本`;
-    statusLine.textContent = '已读取最新账本 · 点击一笔记录查看详情';
+    document.querySelector('#updated').textContent = `更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN')}`;
+    statusLine.textContent = '';
     content.hidden = false;
   } catch (error) {
     if (error.name === 'AbortError') return;
@@ -130,7 +133,7 @@ function showDetail(row) {
 }
 form.addEventListener('submit', event => {event.preventDefault(); page = 1; load();});
 document.querySelector('#refresh').addEventListener('click', load);
-document.querySelector('#reset').addEventListener('click', () => {form.reset(); form.elements.month.value = ''; page = 1; load();});
+document.querySelector('#clear-filters').addEventListener('click', () => {form.reset(); form.elements.month.value = ''; page = 1; load();});
 for (const tab of ['confirmed', 'pending']) document.querySelector(`#${tab}-tab`).addEventListener('click', () => {state = tab; page = 1; load();});
 document.querySelector('#previous').addEventListener('click', () => {if (page > 1) {page--; load();}});
 document.querySelector('#next').addEventListener('click', () => {if (page < pages) {page++; load();}});

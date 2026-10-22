@@ -1,4 +1,4 @@
-<!-- 개인 금융 장부의 모바일 대응 읽기 전용 화면을 구성합니다. -->
+<!-- 개인 금융 장부의 간결한 반응형 화면을 구성합니다. -->
 <!doctype html>
 <html lang="zh-Hans">
 <head>
@@ -9,35 +9,38 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">帳</span><span>Personal Finance<small>我的私人账本</small></span></a><span class="local"><i aria-hidden="true"></i> 本机账本</span></header>
+  <header class="topbar"><a class="brand" href="/">Personal Finance</a><span class="local"><i aria-hidden="true"></i> 私人账本</span></header>
   <main>
-    <section class="intro"><div><p class="eyebrow">YOUR MONEY, AT A GLANCE</p><h1>每一笔，都有迹可循。</h1><p class="muted">随手记在 Telegram，在这里慢慢看清楚。</p></div><button id="refresh" type="button">刷新账本 <span aria-hidden="true">↻</span></button></section>
-    <form id="filters" class="filters" aria-label="筛选账本">
-      <label>月份<input name="month" type="month"></label>
-      <label>付款账户<select name="account"><option value="">全部账户</option></select></label>
-      <label>币种<select name="currency"><option value="">全部币种</option></select></label>
-      <label>分类<select name="category"><option value="">全部分类</option></select></label>
-      <label class="search">搜索<input name="q" type="search" maxlength="200" placeholder="商户、备注或原始描述"></label>
-      <button type="submit" class="primary">筛选</button><button type="button" id="reset">重置</button>
-    </form>
+    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button></section>
     <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
     <div id="content" hidden>
-      <section aria-label="已确认消费汇总" class="summary"><div class="summary-intro"><p class="eyebrow" id="period-label">本月消费</p><h2>生活的两本账</h2><p class="muted">按币种分别记录，<br>不用汇率模糊每一笔。</p></div><div id="totals" class="totals"></div></section>
-      <p class="summary-note">汇总随筛选更新，仅包含已确认消费；转账、取现与待确认草稿不计入。</p>
+      <section class="summary" aria-label="已确认消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>按当前筛选分别汇总各币种，待确认、转账和取现不计入消费。</p></details></section>
       <div class="workspace">
         <section class="ledger" aria-labelledby="ledger-heading">
-          <div class="section-heading"><div><p class="eyebrow">THE LEDGER</p><h2 id="ledger-heading">交易记录</h2></div><span id="record-count" class="muted"></span></div>
-          <div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button></div>
-          <p id="pending-note" class="notice" hidden>这些记录尚未入账，请回 Telegram 审核卡片确认或取消。</p>
-          <div class="table-head" aria-hidden="true"><span>消费与日期</span><span>分类 / 账户</span><span>金额</span></div>
+          <form id="filters" class="filters" aria-label="筛选账本">
+            <div class="filter-main">
+              <label class="month-label" for="month">月份<input id="month" name="month" type="month"></label>
+              <label class="search" for="search">搜索<input id="search" name="q" type="search" maxlength="200" placeholder="商户或备注"></label>
+              <button type="submit" class="primary">应用</button>
+              <details id="advanced-filters" class="advanced-filters"><summary id="filter-label">更多筛选</summary><div class="filter-extra">
+                <label for="account">付款账户<select id="account" name="account"><option value="">全部账户</option></select></label>
+                <label for="currency">币种<select id="currency" name="currency"><option value="">全部币种</option></select></label>
+                <label for="category">分类<select id="category" name="category"><option value="">全部分类</option></select></label>
+                <button type="button" id="clear-filters" class="quiet">清除筛选</button>
+              </div></details>
+            </div>
+          </form>
+          <div class="section-heading"><h2 id="ledger-heading" class="sr-only">交易记录</h2><div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button></div><span id="record-count" class="muted"></span></div>
+          <p id="pending-note" class="notice" hidden>待确认记录请回 Telegram 确认或取消。</p>
+          <div class="table-head" aria-hidden="true"><span>交易</span><span>分类与账户</span><span>金额</span></div>
           <div id="records"></div>
-          <div class="pagination"><button type="button" id="previous">上一页</button><span id="page-label"></span><button type="button" id="next">下一页</button></div>
+          <div class="pagination"><button type="button" id="previous" class="quiet">上一页</button><span id="page-label"></span><button type="button" id="next" class="quiet">下一页</button></div>
         </section>
-        <aside class="breakdown" aria-labelledby="breakdown-heading"><p class="eyebrow">WHERE IT WENT</p><h2 id="breakdown-heading">消费分类</h2><p class="muted">当前筛选下的已确认消费</p><div id="categories"></div></aside>
+        <aside class="breakdown" aria-labelledby="breakdown-heading"><h2 id="breakdown-heading">分类支出</h2><div id="categories"></div></aside>
       </div>
     </div>
-    <footer><span>从一句话，到一笔清楚的账。</span><span id="updated">同一份本机账本 · 数据来自 Telegram</span></footer>
+    <footer><span id="updated"></span></footer>
   </main>
-  <dialog id="detail"><div class="dialog-top"><p class="eyebrow">TRANSACTION DETAILS</p><button id="close-detail" type="button" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl><p class="notice">本阶段为查看页面。待确认记录请回 Telegram 处理。</p></dialog>
+  <dialog id="detail"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl><p class="detail-note">待确认记录请在 Telegram 审核。</p></dialog>
 </body>
 </html>
