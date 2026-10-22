@@ -6,6 +6,9 @@ let state = 'confirmed';
 let page = 1;
 let pages = 1;
 let controller;
+let loading = false;
+let filtersDirty = false;
+let initialized = false;
 let categoryNames = {};
 const money = value => Number(value).toLocaleString('en-SG', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 function el(tag, text, className) {
@@ -25,13 +28,15 @@ function fillOptions(name, values, labels = {}) {
   }
   select.value = selected;
 }
-async function load() {
+async function load({automatic = false} = {}) {
   if (controller) controller.abort();
   controller = new AbortController();
+  const requestController = controller;
+  loading = true;
   const params = new URLSearchParams(new FormData(form));
   params.set('state', state);
   params.set('page', page);
-  statusLine.textContent = '正在更新账本…';
+  if (!automatic) statusLine.textContent = '正在更新账本…';
   statusLine.className = 'status';
   content.setAttribute('aria-busy', 'true');
   try {
@@ -104,6 +109,7 @@ async function load() {
     document.querySelector('#page-label').textContent = `第 ${page} / ${pages} 页`;
     document.querySelector('#updated').textContent = `更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN')}`;
     statusLine.textContent = '';
+    filtersDirty = false;
     content.hidden = false;
   } catch (error) {
     if (error.name === 'AbortError') return;
@@ -112,7 +118,10 @@ async function load() {
     statusLine.textContent = `读取失败：${error.message}。请点“刷新账本”重试。`;
     statusLine.className = 'status error';
   } finally {
-    content.setAttribute('aria-busy', 'false');
+    if (controller === requestController) {
+      loading = false;
+      content.setAttribute('aria-busy', 'false');
+    }
   }
 }
 function showDetail(row) {
@@ -132,6 +141,8 @@ function showDetail(row) {
   document.querySelector('#detail').showModal();
 }
 form.addEventListener('submit', event => {event.preventDefault(); page = 1; load();});
+form.addEventListener('input', () => {filtersDirty = true;});
+form.addEventListener('change', () => {filtersDirty = true;});
 document.querySelector('#refresh').addEventListener('click', load);
 document.querySelector('#clear-filters').addEventListener('click', () => {form.reset(); form.elements.month.value = ''; page = 1; load();});
 for (const tab of ['confirmed', 'pending']) document.querySelector(`#${tab}-tab`).addEventListener('click', () => {state = tab; page = 1; load();});
@@ -141,5 +152,12 @@ document.querySelector('#close-detail').addEventListener('click', () => document
 // The server chooses the default month using APP_TIMEZONE, not the phone's timezone.
 fetch('/api/ledger', {cache: 'no-store'}).then(r => {if (!r.ok) throw new Error(); return r.json();}).then(data => {
   form.elements.month.value = data.month;
-  load();
-}).catch(() => load());
+  return load();
+}).catch(() => load()).finally(() => {initialized = true;});
+
+// Poll only the local ledger; never interrupt editing, details, focus, or an active request.
+setInterval(() => {
+  if (!initialized || loading || filtersDirty || document.visibilityState !== 'visible') return;
+  if (document.querySelector('#detail').open || document.activeElement?.closest('form, dialog, #records')) return;
+  load({automatic: true});
+}, 5000);
