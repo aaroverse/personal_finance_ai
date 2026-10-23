@@ -38,6 +38,7 @@ class FinanceService:
         draft = self._require_owned_pending_draft(telegram_user_id, draft_id)
         today = datetime.now(ZoneInfo(self._settings.app_timezone)).date()
         expense = await self._extractor.extract(text, today)
+        expense.is_personal = draft.expense.is_personal
         return self._repository.update_draft(
             draft_id, telegram_user_id, text.strip(), expense, draft.revision
         )

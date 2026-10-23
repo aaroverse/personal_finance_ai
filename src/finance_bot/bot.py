@@ -156,6 +156,7 @@ async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(
             f"#{transaction.id} · {expense.transaction_date.isoformat()} · "
             f"{expense.currency} {expense.amount:.2f} · {expense.merchant} · {account}"
+            + (" · 非个人支出" if not expense.is_personal else "")
         )
     await message.reply_text("\n".join(lines))
 
@@ -203,6 +204,7 @@ def _format_draft(draft: DraftRecord) -> str:
         f"金额：{expense.currency} {expense.amount:.2f}",
         f"商户：{expense.merchant}",
         f"分类：{expense.category}",
+        f"个人支出：{'计入' if expense.is_personal else '不计入'}",
         f"账户：{account}",
         f"备注：{note}",
         f"识别信心：{expense.confidence:.0%}",

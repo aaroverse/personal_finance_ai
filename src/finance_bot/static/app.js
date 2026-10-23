@@ -52,7 +52,7 @@ async function load({automatic = false} = {}) {
     fillOptions('account', [...data.options.accounts, '__unknown__'], {'__unknown__': '未注明账户'});
     fillOptions('currency', data.options.currencies);
     fillOptions('category', Object.keys(categoryNames), categoryNames);
-    document.querySelector('#period-label').textContent = data.month ? `${data.month.replace('-', ' 年 ')} 月已确认消费` : '全部月份的已确认消费';
+    document.querySelector('#period-label').textContent = data.month ? `${data.month.replace('-', ' 年 ')} 月个人支出` : '全部月份的个人支出';
     const activeFilters = ['account', 'currency', 'category'].filter(name => form.elements[name].value).length;
     document.querySelector('#filter-label').textContent = activeFilters ? `更多筛选 (${activeFilters})` : '更多筛选';
     const totals = document.querySelector('#totals');
@@ -79,6 +79,7 @@ async function load({automatic = false} = {}) {
       button.type = 'button';
       const name = el('span');
       name.append(el('strong', row.merchant), el('small', row.transaction_date));
+      if (!row.is_personal) name.append(el('span', '非个人支出', 'personal-status'));
       const classification = el('span', undefined, 'classification');
       classification.append(el('span', categoryNames[row.category] || row.category, 'category-label'), el('small', row.payment_account || '未注明账户'));
       const amount = el('span', money(row.amount), 'amount');
@@ -147,10 +148,15 @@ function showDetail(row) {
     '付款账户': row.payment_account || '未注明',
     '分类': categoryNames[row.category] || row.category,
     '状态': row.state === 'confirmed' ? '已确认' : '待确认 · 尚未入账',
+    '个人支出': row.is_personal ? '计入' : '不计入（保留对账记录）',
     '备注': row.note || '—',
     '原始描述': row.source_text,
     '识别提示': row.ambiguities.join('；') || '—',
   })) fields.append(el('dt', name), el('dd', value));
+  if (row.statement) {
+    for (const [name, value] of Object.entries({'银行商户': row.statement.merchant, '账单卡片':row.statement.card,
+      '银行入账日':row.statement.posting_date, '账单日期':row.statement.statement_date})) fields.append(el('dt', name), el('dd', value));
+  }
   document.querySelector('#detail').showModal();
 }
 form.addEventListener('submit', event => {event.preventDefault(); page = 1; load();});
@@ -164,6 +170,7 @@ document.querySelector('#next').addEventListener('click', () => {if (page < page
 document.querySelector('#close-detail').addEventListener('click', () => document.querySelector('#detail').close());
 
 function showAuth(setup, message = '') {
+  document.querySelector('#statement-confirm').close();
   clearStatementPreview();
   csrfToken = null;
   initialized = false;
@@ -190,7 +197,7 @@ async function post(path, body) {
   });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401) showAuth(false, '登录已过期，编辑尚未保存。请重新登录。');
+    if (response.status === 401) showAuth(false, '登录已过期，操作未完成。请重新登录后核对。');
     throw Object.assign(new Error(data.error || '操作失败，请重试。'), {fields: data.fields || {}});
   }
   return data;
@@ -257,7 +264,9 @@ document.querySelector('#edit-start').addEventListener('click', () => {
       }
     }
     input.value = currentRecord[name] || '';
+    if (['transaction_date', 'amount', 'currency', 'payment_account'].includes(name)) input.readOnly = !!currentRecord.statement;
   }
+  editForm.elements.is_personal.checked = currentRecord.is_personal;
   const suggestions = document.querySelector('#account-suggestions');
   suggestions.replaceChildren();
   for (const option of form.elements.account.options) {
@@ -295,11 +304,17 @@ document.querySelector('#edit-form').addEventListener('submit', async event => {
     editForm.elements[name].removeAttribute('aria-invalid');
     document.querySelector(`#error-${name}`).textContent = '';
   }
+  expense.is_personal = editForm.elements.is_personal.checked;
   document.querySelector('#detail-error').textContent = '';
   detailBusy(true);
   try {
     const table = currentRecord.state === 'pending' ? 'drafts' : 'transactions';
     await post(`/api/${table}/${currentRecord.id}/edit`, {revision: currentRecord.revision, expense});
+    if (currentStatement && table === 'transactions') {
+      for (const row of currentStatement.rows) if (row.processed?.transaction_id === currentRecord.id) row.processed.is_personal = expense.is_personal;
+      renderStatement(currentStatement);
+      document.querySelector('#statement-status').textContent = '账本记录已更新。未处理候选如有变动，请重新解析核对。';
+    }
     document.querySelector('#detail').close();
     await load();
     statusLine.textContent = currentRecord.state === 'pending' ? '草稿修改已保存，仍需确认入账。' : '修改已保存。';
@@ -359,16 +374,21 @@ fetch('/api/session', {cache: 'no-store'}).then(response => {
 // Poll only the local ledger; never interrupt editing, details, focus, or an active request.
 setInterval(() => {
   if (!initialized || !csrfToken || loading || filtersDirty || statementBusy || document.visibilityState !== 'visible') return;
-  if (document.querySelector('#detail').open || document.activeElement?.closest('form, dialog, #records')) return;
+  if (document.querySelector('#detail').open || document.querySelector('#statement-confirm').open || document.activeElement?.closest('form, dialog, #records')) return;
   load({automatic: true});
 }, 5000);
 
 let statementBusy = false;
 let statementGeneration = 0;
+let currentStatement = null;
+let statementSelection = null;
+const statementChoices = new Map();
 const statementForm = document.querySelector('#statement-form');
 const statementPreview = document.querySelector('#statement-preview');
 function clearStatementPreview() {
   statementGeneration++;
+  currentStatement = null;
+  statementChoices.clear();
   statementForm.reset();
   statementPreview.replaceChildren();
   statementPreview.hidden = true;
@@ -379,6 +399,8 @@ function clearStatementPreview() {
 document.querySelector('#statement-clear').addEventListener('click', clearStatementPreview);
 document.querySelector('#statement-file').addEventListener('change', () => {
   statementGeneration++;
+  currentStatement = null;
+  statementChoices.clear();
   statementPreview.replaceChildren();
   statementPreview.hidden = true;
   document.querySelector('#statement-error').textContent = '';
@@ -414,8 +436,10 @@ statementForm.addEventListener('submit', async event => {
     if (generation !== statementGeneration) return;
     const data = await post('/api/statements/preview', {pdf_base64: encoded});
     if (generation !== statementGeneration) return;
+    currentStatement = data;
+    statementChoices.clear();
     renderStatement(data);
-    feedback.textContent = `账单日 ${data.statement_date} · ${data.cards.length} 张卡 · ${data.rows.length} 笔明细。预览完成，尚未写入账本。`;
+    feedback.textContent = `账单日 ${data.statement_date} · ${data.cards.length} 张卡 · ${data.rows.length} 笔明细。只有逐笔确认后才会写入，已处理明细不可重复入账。`;
   } catch (error) {
     if (generation === statementGeneration) {
       feedback.textContent = '';
@@ -430,7 +454,7 @@ statementForm.addEventListener('submit', async event => {
 function renderStatement(data) {
   statementPreview.replaceChildren();
   for (const warning of data.warnings) statementPreview.append(el('p', warning, 'notice'));
-  statementPreview.append(el('p', '候选仅供核对，不代表已匹配。相同金额可能对应多笔消费，也可能被多行推荐；商户名和你的描述都会保留。此版本还不能确认匹配或补录。', 'notice'));
+  statementPreview.append(el('p', '请选择匹配已有记录或补录；分类需核对。妈咪刷的取消「计入我的个人支出」，仍保留对账记录。还款与贷记暂不补录。', 'notice'));
   for (const card of data.cards) {
     const group = el('details', undefined, 'statement-card');
     group.open = true;
@@ -443,7 +467,9 @@ function renderStatement(data) {
       heading.append(el('strong', row.merchant), el('span', `${money(row.signed_amount)} SGD`, 'amount'));
       line.append(heading, el('p', `消费 ${row.transaction_date} · 入账 ${row.posting_date} · PDF 第 ${row.page} 页`, 'muted'));
       if (row.original_currency) line.append(el('p', `原币 ${row.original_amount} ${row.original_currency}；对账使用 SGD 结算金额。`, 'muted'));
-      if (row.kind !== 'charge') {
+      if (row.processed) {
+        line.append(el('p', `已${row.processed.action === 'match' ? '匹配' : '补录'} · 记录 #${row.processed.transaction_id} · ${row.processed.is_personal ? '个人支出' : '非个人支出'}（可在交易详情修改归属）`, 'statement-processed'));
+      } else if (row.kind !== 'charge') {
         line.append(el('p', row.kind === 'payment' ? '信用卡还款 · 非消费，不寻找消费匹配' : '贷记／退款 · 非新增消费，后续需核对原消费', 'muted'));
       } else if (!row.candidate_count) {
         line.append(el('p', '未找到候选 · 不代表漏记：请检查日期、金额和具体卡片。', 'muted'));
@@ -457,9 +483,86 @@ function renderStatement(data) {
         }
         line.append(candidates);
       }
+      if (!row.processed && row.kind === 'charge' && !data.warnings.length && card.balance_ok) line.append(statementReviewForm(data, row));
       group.append(line);
     }
     statementPreview.append(group);
   }
   statementPreview.hidden = false;
 }
+
+function statementReviewForm(data, row) {
+  const review = el('form', undefined, 'statement-review');
+  review.setAttribute('aria-label', `处理 ${row.merchant} ${row.amount} SGD`);
+  const saved = statementChoices.get(row.row_key) || {action:'', category:'', is_personal:true, acknowledge:false};
+  const actionLabel = el('label', '处理方式');
+  const action = el('select'); action.required = true;
+  const option = (value, label) => {const item = el('option', label); item.value = value; return item;};
+  action.append(option('', '请选择'), option('import', '补录为新记录'));
+  for (const candidate of row.candidates) action.append(option(String(candidate.id), `匹配 #${candidate.id} · ${candidate.merchant} · ${candidate.account}`));
+  action.value = saved.action; actionLabel.append(action);
+  const categoryLabel = el('label', '分类');
+  const category = el('select'); category.required = true;
+  category.append(option('', '请选择分类'));
+  for (const [key, name] of Object.entries(categoryNames)) if (!['transfer','cash_withdrawal'].includes(key)) category.append(option(key, name));
+  category.value = saved.category; categoryLabel.append(category);
+  const personalLabel = el('label', undefined, 'check-label');
+  const personal = el('input'); personal.type = 'checkbox'; personal.checked = saved.is_personal;
+  personalLabel.append(personal, document.createTextNode('计入我的个人支出'));
+  const duplicateLabel = el('label', undefined, 'check-label');
+  const duplicate = el('input'); duplicate.type = 'checkbox'; duplicate.checked = saved.acknowledge;
+  duplicateLabel.append(duplicate, document.createTextNode('我核对过，这是另一笔消费，不是上面的重复记录'));
+  const sync = () => {
+    duplicateLabel.hidden = action.value !== 'import' || !row.possible_duplicate_count;
+    duplicate.required = !duplicateLabel.hidden;
+    statementChoices.set(row.row_key, {action:action.value, category:category.value, is_personal:personal.checked, acknowledge:duplicate.checked});
+  };
+  action.addEventListener('change', () => {
+    const candidate = row.candidates.find(item => String(item.id) === action.value);
+    if (candidate) {category.value = candidate.category; personal.checked = candidate.is_personal;}
+    sync();
+  });
+  for (const input of [category, personal, duplicate]) input.addEventListener('change', sync);
+  sync();
+  const button = el('button', '核对并确认'); button.type = 'submit';
+  review.append(actionLabel, categoryLabel, personalLabel, duplicateLabel, button);
+  review.addEventListener('submit', event => {
+    event.preventDefault();
+    const candidate = row.candidates.find(item => String(item.id) === action.value);
+    statementSelection = {data, row, button, candidate, body:{preview_id:data.preview_id, row_key:row.row_key,
+      action:action.value === 'import' ? 'import' : 'match', category:category.value, is_personal:personal.checked,
+      transaction_id:candidate?.id, revision:candidate?.revision, acknowledge_possible_duplicate:duplicate.checked}};
+    document.querySelector('#statement-confirm-description').textContent = `${row.merchant}\n${row.amount} SGD · ${row.card}\n消费 ${row.transaction_date} · 入账 ${row.posting_date}\n${candidate ? `关联已有记录 #${candidate.id}「${candidate.merchant}」，不新增交易` : '补录一笔新记录'}\n分类：${categoryNames[category.value]}\n${personal.checked ? '计入我的个人支出' : '非个人支出：保留对账记录，不计入我的统计'}`;
+    document.querySelector('#statement-confirm-duplicate').hidden = action.value !== 'import' || !row.possible_duplicate_count;
+    document.querySelector('#statement-confirm-duplicate').textContent = '已有同金额、近日期记录。你选择补录另一笔，请再次确认不是重复消费。';
+    document.querySelector('#statement-confirm-error').textContent = '';
+    document.querySelector('#statement-confirm').showModal();
+  });
+  return review;
+}
+document.querySelector('#statement-confirm-back').addEventListener('click', () => document.querySelector('#statement-confirm').close());
+document.querySelector('#statement-confirm').addEventListener('close', () => statementSelection?.button?.isConnected && statementSelection.button.focus());
+document.querySelector('#statement-confirm-save').addEventListener('click', async () => {
+  if (!statementSelection || statementBusy) return;
+  const selection = statementSelection;
+  const dialog = document.querySelector('#statement-confirm');
+  statementBusy = true;
+  for (const button of dialog.querySelectorAll('button')) button.disabled = true;
+  dialog.setAttribute('aria-busy', 'true');
+  try {
+    const result = await post('/api/statements/confirm', selection.body);
+    if (currentStatement !== selection.data) return;
+    currentStatement = result.preview;
+    dialog.close();
+    renderStatement(currentStatement);
+    document.querySelector('#statement-status').textContent = `已${result.action === 'match' ? '匹配' : '补录'}记录 #${result.transaction_id} · ${result.is_personal ? '计入个人支出' : '非个人支出，不计入统计'}。`;
+    document.querySelector('#statement-status').setAttribute('tabindex', '-1');
+    document.querySelector('#statement-status').focus();
+    await load();
+  } catch (error) {document.querySelector('#statement-confirm-error').textContent = error.message;}
+  finally {
+    statementBusy = false;
+    dialog.setAttribute('aria-busy', 'false');
+    for (const button of dialog.querySelectorAll('button')) button.disabled = false;
+  }
+});

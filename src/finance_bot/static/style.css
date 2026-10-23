@@ -134,6 +134,13 @@ textarea { resize: vertical; }
 .statement-row-header .amount { flex-shrink: 0; }
 .statement-candidates { padding: 12px; margin: 12px 0 0; background: var(--control); border-radius: var(--radius); list-style: none; }
 .statement-candidates li + li { margin-top: 12px; }
+.check-label { flex-direction: row; align-items: center; min-height: 44px; gap: 12px; font-size: 14px; color: var(--ink); cursor: pointer; }
+input[type=checkbox] { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20px; padding: 0; accent-color: var(--ledger); }
+.statement-review { display: grid; gap: 12px; margin-top: 16px; max-width: 560px; }
+.statement-review .edit-grid { gap: 12px; }
+.personal-status { color: var(--amber); font-size: 12px; }
+.statement-processed { color: var(--ledger); font-size: 13px; margin-top: 12px; }
+#statement-confirm-description { line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 960px) {
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .breakdown { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }

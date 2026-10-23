@@ -32,6 +32,7 @@ class ExpenseExtraction(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     merchant: str = Field(min_length=1, max_length=120)
     category: ExpenseCategory
+    is_personal: bool = Field(default=True, strict=True)
     payment_account: str | None = Field(default=None, max_length=80)
     note: str | None = Field(default=None, max_length=300)
     confidence: float = Field(ge=0, le=1)

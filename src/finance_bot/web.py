@@ -25,6 +25,7 @@ from .models import ExpenseExtraction
 from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
 from .web_auth import WebAuth, LoginError
 from .statements import MAX_UPLOAD_BYTES, preview_pdf, suggest_matches
+from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row
 
 
 ASSETS = Path(__file__).parent / "static"
@@ -92,6 +93,10 @@ class LedgerReader:
         with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN")
+            links = {}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_links'").fetchone():
+                links = {r['transaction_id']: {**json.loads(r['statement_json']), 'statement_date': r['statement_date']}
+                    for r in conn.execute('SELECT * FROM statement_links WHERE telegram_user_id=?', (self.owner,))}
             for table, status in (("transactions", "confirmed"), ("drafts", "pending")):
                 sql = f"SELECT * FROM {table} WHERE telegram_user_id = ?"
                 if status == "pending":
@@ -102,6 +107,7 @@ class LedgerReader:
                         "id": row["id"], "state": status,
                         "revision": record_revision(row),
                         "source_text": row["source_text"], "created_at": row["created_at"],
+                        "statement": links.get(row['id']) if status == 'confirmed' else None,
                         **expense.model_dump(mode="json"),
                     })
 
@@ -127,7 +133,7 @@ class LedgerReader:
         groups = defaultdict(Decimal)
         confirmed = [row for row in filtered if row["state"] == "confirmed"]
         for row in confirmed:
-            if row["category"] not in {"transfer", "cash_withdrawal"}:
+            if row['is_personal'] and row["category"] not in {"transfer", "cash_withdrawal"}:
                 amount = Decimal(row["amount"])
                 totals[row["currency"]] += amount
                 groups[(row["currency"], row["category"])] += amount
@@ -163,6 +169,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             raise ValueError('Remote access requires one exact Tailscale HTTPS origin and account login.')
     auth = auth or WebAuth(reader.path.with_name(reader.path.name + ".web-auth.json"))
     repository = FinanceRepository(reader.path)
+    prepare_links(repository)
+    previews = PreviewStore()
 
     class Handler(BaseHTTPRequestHandler):
         def local_request(self) -> bool:
@@ -273,13 +281,35 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 auth.logout(token)
                 self.json_response(200, {"ok": True}, cookie="finance_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
                 return
+            if path == '/api/statements/confirm':
+                try:
+                    preview = previews.get(body.get('preview_id'), token)
+                    result = confirm_row(repository, reader.owner, preview, body)
+                    updated_preview = suggest_matches(preview, reader.path, reader.owner)
+                    updated_preview['preview_id'] = previews.put(token, updated_preview)
+                    result['preview'] = updated_preview
+                    self.json_response(200, result)
+                except ValidationError:
+                    self.json_response(422, {'error':'请选择有效的消费分类。'})
+                except (RecordConflictError, DraftNotPendingError) as exc:
+                    self.json_response(409, {'error':str(exc) if not str(exc).startswith(('Record', 'Draft')) else '记录已经更新，请重新上传后核对。'})
+                except (ValueError, TypeError) as exc:
+                    self.json_response(400, {'error':str(exc) or '请检查确认内容。'})
+                except sqlite3.IntegrityError:
+                    self.json_response(409, {'error':'这笔交易或明细已关联，不能重复处理。'})
+                except sqlite3.Error:
+                    self.json_response(503, {'error':'暂时无法保存，请稍后再试。'})
+                return
             if statement_upload:
                 try:
                     encoded = body.get('pdf_base64')
                     if not isinstance(encoded, str):
                         raise ValueError('请选择 PDF 文件。')
                     data = base64.b64decode(encoded, validate=True)
-                    preview = suggest_matches(preview_pdf(data), reader.path, reader.owner)
+                    preview = preview_pdf(data)
+                    identify_rows(preview, data)
+                    preview = suggest_matches(preview, reader.path, reader.owner)
+                    preview['preview_id'] = previews.put(token, preview)
                     self.json_response(200, preview)
                 except (binascii.Error, ValueError):
                     self.json_response(422, {"error": "无法解析：请上传 6 MB 内、1–20 页、未加密的新加坡 UOB 信用卡原始 PDF。扫描件和其他格式暂不支持。"})
@@ -317,7 +347,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 fields = {str(error["loc"][0]): error["msg"] for error in exc.errors(include_input=False)}
                 self.json_response(422, {"error": "请检查标记的字段：金额需大于零且最多两位小数，其他字段需完整。", "fields": fields})
             except (DraftNotPendingError, RecordConflictError):
-                self.json_response(409, {"error": "这笔记录已更新或已在 Telegram 处理。请关闭详情并刷新后重试。"})
+                self.json_response(409, {"error": "记录已更新或已关联账单。已关联的金额、日期、币种与账户不可改动；分类和个人支出仍可修改。请关闭并刷新后重试。"})
             except (ValueError, TypeError):
                 self.json_response(400, {"error": "请填写完整的交易资料。"})
             except sqlite3.Error:

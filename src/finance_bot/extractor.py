@@ -63,6 +63,7 @@ class DeepSeekExpenseExtractor:
         try:
             raw = json.loads(content)
             result = ExpenseExtraction.model_validate(raw)
+            result.is_personal = True  # Attribution is a user's explicit review choice, never an AI decision.
         except (json.JSONDecodeError, ValidationError) as exc:
             raise ExtractionError("DeepSeek returned invalid expense fields.") from exc
 

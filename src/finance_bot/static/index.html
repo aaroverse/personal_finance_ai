@@ -24,7 +24,7 @@
     <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
     <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
     <div id="content" hidden>
-      <section class="summary" aria-label="已确认消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>按当前筛选分别汇总各币种，待确认、转账和取现不计入消费。</p></details></section>
+      <section class="summary" aria-label="已确认个人消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。</p></details></section>
       <div class="workspace">
         <section class="ledger" aria-labelledby="ledger-heading">
           <form id="filters" class="filters" aria-label="筛选账本">
@@ -51,7 +51,7 @@
     </div>
     <details id="statement-panel" class="statement-panel">
       <summary>信用卡账单 · UOB 新加坡</summary>
-      <p id="statement-help" class="muted">仅在你的 MBP 本机解析，不发送给 AI、不保存 PDF。当前为预览版，刷新页面会清除预览，不会修改账本。</p>
+      <p id="statement-help" class="muted">仅在 MBP 本机解析，不发给 AI、不保存 PDF。选择匹配或补录，核对后才写入账本；妈咪刷的可取消「计入我的个人支出」。未确认预览 30 分钟后过期。</p>
       <form id="statement-form">
         <label for="statement-file">单月信用卡 PDF<input id="statement-file" type="file" accept="application/pdf,.pdf" required aria-describedby="statement-help statement-error"></label>
         <div class="page-actions"><button id="statement-submit" class="primary" type="submit">解析并预览</button><button id="statement-clear" class="quiet" type="button">清除预览</button></div>
@@ -74,13 +74,21 @@
       </div>
       <label for="edit-account">付款账户<input id="edit-account" name="payment_account" list="account-suggestions" maxlength="80" placeholder="例如 SG UOB 信用卡" aria-describedby="error-payment_account"><span id="error-payment_account" class="field-error"></span></label><datalist id="account-suggestions"></datalist>
       <label for="edit-note">备注<textarea id="edit-note" name="note" rows="2" maxlength="300" aria-describedby="error-note"></textarea><span id="error-note" class="field-error"></span></label>
-      <div class="original-message"><span class="muted">原始 Telegram 描述（保留不变）</span><p id="edit-source"></p></div>
+      <label for="edit-personal" class="check-label"><input id="edit-personal" name="is_personal" type="checkbox" aria-describedby="personal-help error-is_personal">计入我的个人支出</label><p id="personal-help" class="muted">取消后保留记录用于对账，但不计入个人支出及分类统计。</p><span id="error-is_personal" class="field-error"></span>
+      <div class="original-message"><span class="muted">原始来源描述（保留不变）</span><p id="edit-source"></p></div>
       <div class="dialog-actions"><button id="edit-save" class="primary" type="submit">保存修改</button><button id="edit-cancel" class="quiet" type="button">返回详情</button></div>
     </form>
     <p id="detail-error" class="form-error" role="alert"></p>
     <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button">修改记录</button><button id="confirm-record" class="primary" type="button" hidden>确认入账</button><button id="cancel-record" class="quiet" type="button" hidden>取消草稿</button></div>
     <section id="review-check" class="notice" hidden><p id="review-message"></p><div class="dialog-actions"><button id="review-submit" class="primary" type="button">确定</button><button id="review-back" class="quiet" type="button">返回</button></div></section>
     <p class="detail-note">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。</p>
+  </dialog>
+  <dialog id="statement-confirm" aria-labelledby="statement-confirm-title">
+    <h2 id="statement-confirm-title">确认这笔账单明细</h2>
+    <p id="statement-confirm-description"></p>
+    <p id="statement-confirm-duplicate" class="notice" hidden></p>
+    <p id="statement-confirm-error" class="form-error" role="alert"></p>
+    <div class="dialog-actions"><button id="statement-confirm-back" type="button">返回检查</button><button id="statement-confirm-save" class="primary" type="button">确认保存</button></div>
   </dialog>
 </body>
 </html>

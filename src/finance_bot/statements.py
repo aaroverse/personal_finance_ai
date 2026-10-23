@@ -11,6 +11,9 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from .database import record_revision
+from .reconciliation import saved_links
+
 MAX_PDF_BYTES = 6 * 1024 * 1024
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024 + 1024
 _workers = threading.BoundedSemaphore(2)
@@ -161,26 +164,32 @@ def preview_pdf(data: bytes) -> dict:
 def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
     # Read-only, owner-scoped; candidates never modify or silently link a record.
     with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
-        records = [(rid, json.loads(expense)) for rid, expense in conn.execute(
-            'SELECT id, expense_json FROM transactions WHERE telegram_user_id=?', (owner,))]
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN')
+        records = [dict(r) for r in conn.execute('SELECT * FROM transactions WHERE telegram_user_id=?', (owner,))]
+        processed = saved_links(conn, owner)
+        linked_ids = {item['transaction_id'] for item in processed.values()}
     for row in preview['rows']:
         candidates = []
+        row['possible_duplicate_count'] = 0
+        row['processed'] = None
+        saved = processed.get(row.get('row_key'))
+        if saved:
+            row['processed'] = {'transaction_id':saved['transaction_id'], 'action':saved['action'],
+                'is_personal':json.loads(saved['expense_json']).get('is_personal', True)}
         if row['kind'] == 'charge':
-            for rid, expense in records:
-                if expense['currency'] != 'SGD' or Decimal(expense['amount']) != Decimal(row['amount']):
+            for record in records:
+                expense = json.loads(record['expense_json'])
+                if not eligible_match(row, expense):
                     continue
-                if expense['category'] in {'transfer', 'cash_withdrawal'}:
+                row['possible_duplicate_count'] += 1
+                if record['id'] in linked_ids:
                     continue
                 days = abs((date.fromisoformat(expense['transaction_date']) - date.fromisoformat(row['transaction_date'])).days)
                 account = expense.get('payment_account') or ''
-                if days > 3 or (account and 'uob' not in account.casefold()):
-                    continue
                 digits = re.findall(r'\d{4}', account)
-                if digits and digits[-1] != row['card'][-4:]:
-                    continue
-                if re.search(r'\b(MY|MYR|MALAYSIA)\b', account, re.I):
-                    continue
-                candidates.append({'id': rid, 'merchant': expense['merchant'],
+                candidates.append({'id': record['id'], 'revision':record_revision(record),
+                    'category':expense['category'], 'is_personal':expense.get('is_personal', True), 'merchant': expense['merchant'],
                     'transaction_date': expense['transaction_date'], 'amount': expense['amount'],
                     'account': account or '未注明账户', 'day_difference': days,
                     'reason': '金额及币种一致；日期相差 ' + str(days) + ' 天；' + ('卡尾号一致' if digits else '具体卡片仍需核对')})
@@ -188,6 +197,18 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
         row['candidate_count'] = len(candidates)
         row['candidates'] = candidates[:5]
     return preview
+
+
+def eligible_match(row: dict, expense: dict) -> bool:
+    if row['kind'] != 'charge' or expense['currency'] != row['currency'] or Decimal(expense['amount']) != Decimal(row['amount']):
+        return False
+    if expense['category'] in {'transfer', 'cash_withdrawal'}:
+        return False
+    days = abs((date.fromisoformat(expense['transaction_date']) - date.fromisoformat(row['transaction_date'])).days)
+    account = expense.get('payment_account') or ''
+    digits = re.findall(r'\d{4}', account)
+    return not (days > 3 or (account and 'uob' not in account.casefold())
+        or (digits and digits[-1] != row['card'][-4:]) or re.search(r'\b(MY|MYR|MALAYSIA)\b', account, re.I))
 
 
 if __name__ == '__main__':

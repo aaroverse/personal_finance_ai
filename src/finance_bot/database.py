@@ -33,10 +33,11 @@ class DraftRecord:
     status: str
     created_at: str
     updated_at: str
+    stored_revision: str | None = None
 
     @property
     def revision(self) -> str:
-        return record_revision({"expense_json": self.expense.model_dump_json(), "source_text": self.source_text, "status": self.status})
+        return self.stored_revision or record_revision({"expense_json": self.expense.model_dump_json(), "source_text": self.source_text, "status": self.status})
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,16 @@ class FinanceRepository:
             ).fetchone()
             self._check_revision(row, revision)
             updated = expense.model_dump_json()
+            if record_type == 'transactions' and connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='statement_links'"
+            ).fetchone() and connection.execute(
+                'SELECT 1 FROM statement_links WHERE telegram_user_id=? AND transaction_id=?', (owner, record_id)
+            ).fetchone():
+                previous = ExpenseExtraction.model_validate_json(row['expense_json'])
+                if any(getattr(previous, key) != getattr(expense, key) for key in (
+                    'amount', 'currency', 'transaction_date', 'payment_account'
+                )):
+                    raise RecordConflictError('Matched statement facts are locked.')
             connection.execute(
                 f"UPDATE {record_type} SET expense_json=? WHERE id=? AND telegram_user_id=?",
                 (updated, record_id, owner),
@@ -299,6 +310,7 @@ def _draft_from_row(row: sqlite3.Row) -> DraftRecord:
         status=str(row["status"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        stored_revision=record_revision(row),
     )
 
 

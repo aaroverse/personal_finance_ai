@@ -18,6 +18,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         level=settings.log_level.upper(),
     )
+    # HTTP request URLs contain the Telegram token; do not emit routine network logs.
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
 
     repository = FinanceRepository(settings.database_path)
     repository.initialize()
@@ -25,7 +28,7 @@ def main() -> None:
     service = FinanceService(settings, repository, extractor)
     application = build_application(settings.telegram_bot_token.get_secret_value(), service)
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
     finally:
         asyncio.run(extractor.close())
 
