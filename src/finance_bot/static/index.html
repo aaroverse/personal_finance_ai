@@ -21,7 +21,7 @@
       </form>
     </section>
     <div id="dashboard" hidden>
-    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
+    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="open-statement" class="primary" type="button" aria-haspopup="dialog" aria-controls="statement-panel">上传账单</button><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
     <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
     <div id="content" hidden>
       <section class="summary" aria-label="已确认个人消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。</p></details></section>
@@ -49,20 +49,22 @@
         <aside class="breakdown" aria-labelledby="breakdown-heading"><h2 id="breakdown-heading">分类支出</h2><div id="categories"></div></aside>
       </div>
     </div>
-    <details id="statement-panel" class="statement-panel">
-      <summary>信用卡账单 · UOB 新加坡</summary>
-      <p id="statement-help" class="muted">仅在 MBP 本机解析，不发给 AI、不保存 PDF。选择匹配或补录，核对后才写入账本；妈咪刷的可取消「计入我的个人支出」。未确认预览 30 分钟后过期。</p>
-      <form id="statement-form">
-        <label for="statement-file">单月信用卡 PDF<input id="statement-file" type="file" accept="application/pdf,.pdf" required aria-describedby="statement-help statement-error"></label>
-        <div class="page-actions"><button id="statement-submit" class="primary" type="submit">解析并预览</button><button id="statement-clear" class="quiet" type="button">清除预览</button></div>
-      </form>
-      <p id="statement-status" class="status" role="status"></p>
-      <p id="statement-error" class="form-error" role="alert"></p>
-      <div id="statement-preview" hidden></div>
-    </details>
     <footer><span id="updated"></span></footer>
     </div>
   </main>
+  <dialog id="statement-panel" class="statement-dialog" aria-labelledby="statement-title" aria-describedby="statement-help">
+    <div class="dialog-top"><h2 id="statement-title">上传账单</h2><button id="close-statement" class="quiet" type="button" autofocus>关闭</button></div>
+    <p id="statement-help" class="muted">选择 PDF，自动识别银行与账单格式。核对后再确认入账。</p>
+    <form id="statement-form">
+      <label for="statement-file">账单 PDF<input id="statement-file" type="file" accept="application/pdf,.pdf" required aria-describedby="statement-help statement-support statement-error"></label>
+      <div class="page-actions"><button id="statement-submit" class="primary" type="submit">识别并预览</button><button id="statement-clear" class="quiet" type="button">清除预览</button></div>
+    </form>
+    <details class="statement-help-details"><summary>支持范围与隐私</summary><p id="statement-support" class="muted">目前支持新加坡 UOB 信用卡电子账单，其他格式暂不支持。限 6 MB、20 页的未加密 PDF。仅在本机解析，不发送给 AI、不保存 PDF。关闭可稍后继续，刷新会清除未确认预览；预览 30 分钟后过期，已确认记录不受影响。</p></details>
+    <p id="statement-status" class="status" role="status"></p>
+    <p id="statement-error" class="form-error" role="alert"></p>
+    <div id="statement-detected" class="statement-context" hidden><h3 id="statement-bank"></h3><p id="statement-metadata" class="muted"></p></div>
+    <div id="statement-preview" hidden></div>
+  </dialog>
   <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl>
     <form id="edit-form" class="edit-form" hidden>
       <label for="edit-merchant">商户或消费描述<input id="edit-merchant" name="merchant" required maxlength="120" aria-describedby="error-merchant"><span id="error-merchant" class="field-error"></span></label>

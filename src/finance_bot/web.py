@@ -312,7 +312,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                     preview['preview_id'] = previews.put(token, preview)
                     self.json_response(200, preview)
                 except (binascii.Error, ValueError):
-                    self.json_response(422, {"error": "无法解析：请上传 6 MB 内、1–20 页、未加密的新加坡 UOB 信用卡原始 PDF。扫描件和其他格式暂不支持。"})
+                    self.json_response(422, {"error": "未能识别支持的账单格式。当前支持新加坡 UOB 信用卡电子账单；请使用 6 MB 内、1–20 页的未加密原始 PDF。其他银行、扫描件及银行账户流水暂不支持。"})
                 except (sqlite3.Error, OSError, subprocess.SubprocessError):
                     self.json_response(503, {"error": "暂时无法处理账单，请稍后重试。"})
                 return

@@ -171,6 +171,7 @@ document.querySelector('#close-detail').addEventListener('click', () => document
 
 function showAuth(setup, message = '') {
   document.querySelector('#statement-confirm').close();
+  document.querySelector('#statement-panel').close();
   clearStatementPreview();
   csrfToken = null;
   initialized = false;
@@ -374,7 +375,7 @@ fetch('/api/session', {cache: 'no-store'}).then(response => {
 // Poll only the local ledger; never interrupt editing, details, focus, or an active request.
 setInterval(() => {
   if (!initialized || !csrfToken || loading || filtersDirty || statementBusy || document.visibilityState !== 'visible') return;
-  if (document.querySelector('#detail').open || document.querySelector('#statement-confirm').open || document.activeElement?.closest('form, dialog, #records')) return;
+  if (document.querySelector('#detail').open || document.querySelector('#statement-panel').open || document.querySelector('#statement-confirm').open || document.activeElement?.closest('form, dialog, #records')) return;
   load({automatic: true});
 }, 5000);
 
@@ -385,6 +386,11 @@ let statementSelection = null;
 const statementChoices = new Map();
 const statementForm = document.querySelector('#statement-form');
 const statementPreview = document.querySelector('#statement-preview');
+document.querySelector('#open-statement').addEventListener('click', () => document.querySelector('#statement-panel').showModal());
+document.querySelector('#close-statement').addEventListener('click', () => document.querySelector('#statement-panel').close());
+document.querySelector('#statement-panel').addEventListener('close', () => {
+  if (!document.querySelector('#dashboard').hidden) document.querySelector('#open-statement').focus();
+});
 function clearStatementPreview() {
   statementGeneration++;
   currentStatement = null;
@@ -392,6 +398,8 @@ function clearStatementPreview() {
   statementForm.reset();
   statementPreview.replaceChildren();
   statementPreview.hidden = true;
+  document.querySelector('#statement-detected').hidden = true;
+  document.querySelector('#statement-panel').classList.remove('has-preview');
   document.querySelector('#statement-error').textContent = '';
   document.querySelector('#statement-status').textContent = '';
   document.querySelector('#statement-file').removeAttribute('aria-invalid');
@@ -403,6 +411,8 @@ document.querySelector('#statement-file').addEventListener('change', () => {
   statementChoices.clear();
   statementPreview.replaceChildren();
   statementPreview.hidden = true;
+  document.querySelector('#statement-detected').hidden = true;
+  document.querySelector('#statement-panel').classList.remove('has-preview');
   document.querySelector('#statement-error').textContent = '';
   document.querySelector('#statement-status').textContent = '';
   document.querySelector('#statement-file').removeAttribute('aria-invalid');
@@ -416,6 +426,8 @@ statementForm.addEventListener('submit', async event => {
   errorLine.textContent = '';
   statementPreview.replaceChildren();
   statementPreview.hidden = true;
+  document.querySelector('#statement-detected').hidden = true;
+  document.querySelector('#statement-panel').classList.remove('has-preview');
   if (!file || file.size > 6 * 1024 * 1024 || !file.name.toLowerCase().endsWith('.pdf')) {
     errorLine.textContent = '请选择不超过 6 MB 的 PDF 文件。';
     document.querySelector('#statement-file').setAttribute('aria-invalid', 'true');
@@ -425,7 +437,7 @@ statementForm.addEventListener('submit', async event => {
   statementBusy = true;
   document.querySelector('#statement-submit').disabled = true;
   statementForm.setAttribute('aria-busy', 'true');
-  feedback.textContent = '正在本机解析，请稍候…';
+  feedback.textContent = '正在本机识别银行与账单格式…';
   try {
     const encoded = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -439,7 +451,7 @@ statementForm.addEventListener('submit', async event => {
     currentStatement = data;
     statementChoices.clear();
     renderStatement(data);
-    feedback.textContent = `账单日 ${data.statement_date} · ${data.cards.length} 张卡 · ${data.rows.length} 笔明细。只有逐笔确认后才会写入，已处理明细不可重复入账。`;
+    feedback.textContent = '识别完成，请逐笔核对。只有确认后才会写入账本。';
   } catch (error) {
     if (generation === statementGeneration) {
       feedback.textContent = '';
@@ -452,6 +464,10 @@ statementForm.addEventListener('submit', async event => {
   }
 });
 function renderStatement(data) {
+  document.querySelector('#statement-panel').classList.add('has-preview');
+  document.querySelector('#statement-detected').hidden = false;
+  document.querySelector('#statement-bank').textContent = `已识别：${data.bank === 'UOB SG' ? 'UOB 新加坡' : data.bank} · 信用卡账单`;
+  document.querySelector('#statement-metadata').textContent = `账单日 ${data.statement_date} · ${data.cards.length} 张卡 · ${data.rows.length} 笔明细`;
   statementPreview.replaceChildren();
   for (const warning of data.warnings) statementPreview.append(el('p', warning, 'notice'));
   statementPreview.append(el('p', '请选择匹配已有记录或补录；分类需核对。妈咪刷的取消「计入我的个人支出」，仍保留对账记录。还款与贷记暂不补录。', 'notice'));

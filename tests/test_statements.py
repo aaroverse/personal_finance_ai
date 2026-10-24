@@ -9,7 +9,7 @@ from http.client import HTTPConnection
 
 import pytest
 
-from finance_bot.statements import parse_uob_text, preview_pdf, suggest_matches, MAX_UPLOAD_BYTES
+from finance_bot.statements import parse_uob_text, parse_statement_text, preview_pdf, suggest_matches, MAX_UPLOAD_BYTES
 from finance_bot import statements
 from test_web_editing import running, login
 from test_web import add
@@ -109,13 +109,39 @@ def test_rejects_unsupported_text(content):
 
 
 def test_real_pdf_worker_and_invalid_pdf():
-    assert preview_pdf(pdf_bytes())['cards'][0]['balance_ok']
+    result = preview_pdf(pdf_bytes())
+    assert result['cards'][0]['balance_ok']
+    assert result['format_id'] == 'uob_sg_credit_card'
     with pytest.raises(ValueError):
         preview_pdf(b'not a pdf')
     with pytest.raises(ValueError):
         preview_pdf(b'%PDF-corrupt')
     with pytest.raises(ValueError):
         preview_pdf(b'%PDF-' + b'x' * (6 * 1024 * 1024))
+
+
+def test_format_detection_routes_content_and_rejects_other_banks_or_currencies():
+    assert parse_statement_text([SAMPLE])['bank'] == 'UOB SG'
+    for content in [SAMPLE.replace('United Overseas Bank Limited','DBS Bank Limited'),
+            SAMPLE.replace('Date Date SGD','Date Date MYR'),
+            'UOB SG filename-looking title but no card transaction table']:
+        with pytest.raises(ValueError, match='尚未支持'):
+            parse_statement_text([content])
+
+
+def test_unified_upload_ignores_filename_hints_and_fails_closed(tmp_path):
+    with running(tmp_path) as (repo,reader,client):
+        login(client)
+        result = client.post('/api/statements/preview', json={'filename':'arbitrary-bank-name.pdf',
+            'pdf_base64':base64.b64encode(pdf_bytes()).decode()})
+        assert result.status_code == 200
+        assert result.json()['format_id'] == 'uob_sg_credit_card'
+        wrong_bank = SAMPLE.replace('United Overseas Bank Limited','Another Bank Limited')
+        result = client.post('/api/statements/preview',json={'filename':'UOB statement.pdf',
+            'pdf_base64':base64.b64encode(pdf_bytes(wrong_bank)).decode()})
+        assert result.status_code == 422
+        assert '暂不支持' in result.json()['error']
+        assert repo.count_transactions() == 0
 
 
 def test_timeout_and_busy_workers_fail_closed_and_release_slots(monkeypatch):

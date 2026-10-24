@@ -138,7 +138,17 @@ def _extract_pdf(data: bytes) -> dict:
         raise
     except Exception as exc:
         raise ValueError('无法读取 PDF；请使用未加密的原始电子账单，不要上传扫描图片。') from exc
-    return parse_uob_text(pages)
+    return parse_statement_text(pages)
+
+
+def parse_statement_text(pages: list[str]) -> dict:
+    # Route by document contents, never by a filename or a user-selected bank.
+    text = '\n'.join(pages)
+    if 'United Overseas Bank' in text and re.search(r'Date\s+Date\s+SGD', text):
+        result = parse_uob_text(pages)
+        result['format_id'] = 'uob_sg_credit_card'
+        return result
+    raise ValueError('尚未支持这份账单的银行或格式。当前支持新加坡 UOB 信用卡电子账单；不会套用其他解析格式。')
 
 
 def preview_pdf(data: bytes) -> dict:
