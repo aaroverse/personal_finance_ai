@@ -148,6 +148,23 @@ input[type=checkbox] { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20
 .personal-status { color: var(--amber); font-size: 12px; }
 .statement-processed { color: var(--ledger); font-size: 13px; margin-top: 12px; }
 #statement-confirm-description { line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.statement-batch { display: grid; gap: 12px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.statement-batch > label { max-width: 320px; }
+.statement-batch .page-actions button { font-weight: 500; }
+.batch-category { display: flex; align-items: end; gap: 12px; max-width: 480px; }
+.batch-category label { flex: 1; min-width: 0; }
+.batch-adjust > summary { padding: 12px 0; min-height: 44px; font-size: 13px; color: var(--muted); }
+.batch-adjust > .page-actions { margin-top: 12px; }
+.statement-context-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.statement-context-top .quiet { padding: 8px; }
+#statement-upload-controls > .muted { margin: 0 0 20px; }
+.batch-summary { margin: 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.statement-adjust > summary { min-height: 44px; padding: 12px 0; color: var(--muted); font-size: 13px; cursor: pointer; }
+.statement-row .check-label { min-width: 0; }
+.statement-row .check-label strong { font-weight: 600; }
+.card-default { display: grid; gap: 4px; margin-top: 12px; }
+.card-default button { justify-self: start; }
+.suggestion-label { font-size: 12px; color: var(--ledger); }
 @media (max-width: 960px) {
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .breakdown { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }
@@ -163,6 +180,8 @@ input[type=checkbox] { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20
   .auth-panel { margin: 24px auto; }
   .intro { margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
   .intro .page-actions { width: 100%; }
+  .batch-category { flex-wrap: wrap; }
+  .batch-category label { flex-basis: 100%; }
   .summary { display: block; padding: 12px 0 16px; margin-bottom: 20px; }
   .totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   .money-block { min-width: 0; }

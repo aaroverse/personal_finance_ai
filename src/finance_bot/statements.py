@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .database import record_revision
 from .reconciliation import saved_links
+from .statement_suggestions import preprocess
 
 MAX_PDF_BYTES = 6 * 1024 * 1024
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024 + 1024
@@ -177,7 +178,13 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN')
         records = [dict(r) for r in conn.execute('SELECT * FROM transactions WHERE telegram_user_id=?', (owner,))]
+        for record in records:
+            record['parsed_expense'] = json.loads(record['expense_json'])
         processed = saved_links(conn, owner)
+        defaults = {}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_card_defaults'").fetchone():
+            defaults = {r['card']:bool(r['is_personal']) for r in conn.execute(
+                'SELECT card,is_personal FROM statement_card_defaults WHERE telegram_user_id=?', (owner,))}
         linked_ids = {item['transaction_id'] for item in processed.values()}
     for row in preview['rows']:
         candidates = []
@@ -189,7 +196,7 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
                 'is_personal':json.loads(saved['expense_json']).get('is_personal', True)}
         if row['kind'] == 'charge':
             for record in records:
-                expense = json.loads(record['expense_json'])
+                expense = record['parsed_expense']
                 if not eligible_match(row, expense):
                     continue
                 row['possible_duplicate_count'] += 1
@@ -206,7 +213,7 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
         candidates.sort(key=lambda item: (item['day_difference'], item['id']))
         row['candidate_count'] = len(candidates)
         row['candidates'] = candidates[:5]
-    return preview
+    return preprocess(preview, processed, defaults)
 
 
 def eligible_match(row: dict, expense: dict) -> bool:

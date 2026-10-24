@@ -25,7 +25,7 @@ from .models import ExpenseExtraction
 from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
 from .web_auth import WebAuth, LoginError
 from .statements import MAX_UPLOAD_BYTES, preview_pdf, suggest_matches
-from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row
+from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row, confirm_rows, save_card_default
 
 
 ASSETS = Path(__file__).parent / "static"
@@ -242,7 +242,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 return
             path = urlsplit(self.path).path
             statement_upload = path == '/api/statements/preview'
-            if statement_upload:
+            batch_upload = path == '/api/statements/confirm-batch'
+            if statement_upload or batch_upload:
                 csrf = auth.session(self.session_token())
                 if csrf is None:
                     self.json_response(401, {"error": "请先登录账本。"})
@@ -252,7 +253,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                     return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= (MAX_UPLOAD_BYTES if statement_upload else 32768):
+                if not 0 < length <= (MAX_UPLOAD_BYTES if statement_upload else (512 * 1024 if batch_upload else 32768)):
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
@@ -281,10 +282,16 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 auth.logout(token)
                 self.json_response(200, {"ok": True}, cookie="finance_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
                 return
-            if path == '/api/statements/confirm':
+            if path in {'/api/statements/confirm','/api/statements/confirm-batch','/api/statements/card-default'}:
                 try:
                     preview = previews.get(body.get('preview_id'), token)
-                    result = confirm_row(repository, reader.owner, preview, body)
+                    if path.endswith('confirm-batch'):
+                        result = confirm_rows(repository, reader.owner, preview, body.get('items'))
+                    elif path.endswith('card-default'):
+                        save_card_default(repository, reader.owner, preview, body)
+                        result = {'ok':True, 'preference_saved':True}
+                    else:
+                        result = confirm_row(repository, reader.owner, preview, body)
                     updated_preview = suggest_matches(preview, reader.path, reader.owner)
                     updated_preview['preview_id'] = previews.put(token, updated_preview)
                     result['preview'] = updated_preview
@@ -292,7 +299,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 except ValidationError:
                     self.json_response(422, {'error':'请选择有效的消费分类。'})
                 except (RecordConflictError, DraftNotPendingError) as exc:
-                    self.json_response(409, {'error':str(exc) if not str(exc).startswith(('Record', 'Draft')) else '记录已经更新，请重新上传后核对。'})
+                    message = str(exc) if not str(exc).startswith(('Record', 'Draft')) else '记录已经更新，请重新上传后核对。'
+                    self.json_response(409, {'error':message + (' 本批次未保存任何一笔。' if batch_upload else '')})
                 except (ValueError, TypeError) as exc:
                     self.json_response(400, {'error':str(exc) or '请检查确认内容。'})
                 except sqlite3.IntegrityError:

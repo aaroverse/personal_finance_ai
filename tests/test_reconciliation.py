@@ -166,7 +166,7 @@ def test_identical_rows_are_distinct_but_reprocessing_and_concurrent_import_cann
     data=suggest_matches(data,repo._path,42)
     charges=[r for r in data['rows'] if r['kind']=='charge']
     assert charges[0]['row_key']!=charges[1]['row_key']
-    body={'row_key':charges[0]['row_key'],'action':'import','category':'dining','is_personal':False}
+    body={'row_key':charges[0]['row_key'],'action':'import','category':'dining','is_personal':False,'acknowledge_possible_duplicate':True}
     def attempt(_):
         try:
             confirm_row(repo,42,data,body)
