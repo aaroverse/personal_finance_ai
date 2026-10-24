@@ -223,7 +223,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 except (sqlite3.Error, OSError):
                     self.respond(503, '{"error":"暂时无法读取账本，请检查数据库路径或稍后刷新。"}'.encode(), "application/json")
                 return
-            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
+            files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/statement-flow.js": ("statement-flow.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
             if parsed.path not in files:
                 self.respond(404, b"Not found", "text/plain")
                 return

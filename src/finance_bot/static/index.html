@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>我的账本 · Personal Finance</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/statement-flow.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -65,20 +66,13 @@
     <p id="statement-status" class="status" role="status"></p>
     <p id="statement-error" class="form-error" role="alert"></p>
     <div id="statement-detected" class="statement-context" hidden><div class="statement-context-top"><h3 id="statement-bank"></h3><button id="statement-change" class="quiet" type="button" aria-controls="statement-upload-controls" aria-expanded="false">更换账单</button></div><p id="statement-metadata" class="muted"></p></div>
-    <section id="statement-batch" class="statement-batch" hidden aria-label="批量核对工具">
-      <p class="muted">已用本机规则与已确认历史整理并预选建议。例外默认不选，可随时取消选择；确认整批后才入账。</p>
-      <label for="statement-view">查看<select id="statement-view"><option value="pending">未处理消费</option><option value="ready_match">建议匹配</option><option value="ready_import">建议补录</option><option value="review">需要你看</option><option value="all">全部明细</option></select></label>
-      <div class="page-actions"><button id="statement-select-ready" type="button">选中全部建议</button><button id="statement-select-visible" type="button">选中本页</button><button id="statement-select-none" class="quiet" type="button">取消全部选择</button></div>
-      <details class="batch-adjust"><summary>批改所选记录的分类与归属</summary>
-      <div class="batch-category"><label for="statement-bulk-category">批改所有已选分类（含其他页）<select id="statement-bulk-category"><option value="">请选择分类</option></select></label><button id="statement-apply-category" type="button">应用分类</button></div>
-      <div class="page-actions"><button id="statement-mark-personal" type="button">所选计入个人</button><button id="statement-mark-other" type="button">所选不计入个人</button></div>
-      </details>
-      <p id="statement-batch-summary" class="batch-summary" role="status"></p>
-      <button id="statement-confirm-batch" class="primary" type="button">核对所选整批</button>
-      <p class="muted">选择会跨分页和筛选保留；整批包含所有已选记录。未知分类需先补全。</p>
+    <section id="statement-batch" class="statement-batch" hidden aria-label="核对进度">
+      <div class="statement-context-top"><h3 id="statement-step">1 · 确认卡片归属</h3><button id="statement-ownership" class="quiet" type="button" hidden>修改卡片归属</button></div>
+      <p id="statement-step-help" class="muted"></p>
+      <div class="page-actions"><span id="statement-feedback" role="status" tabindex="-1"></span><button id="statement-undo" class="quiet" type="button" hidden>撤销上次明细调整</button></div>
     </section>
     <div id="statement-preview" hidden></div>
-    <div id="statement-pages" class="pagination" hidden><button id="statement-previous" type="button">上一页</button><span id="statement-page"></span><button id="statement-next" type="button">下一页</button></div>
+    <div id="statement-footer" class="statement-footer" hidden><p id="statement-batch-summary" class="batch-summary"></p><button id="statement-confirm-batch" class="primary" type="button">检查待处理</button></div>
   </dialog>
   <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl>
     <form id="edit-form" class="edit-form" hidden>

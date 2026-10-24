@@ -164,6 +164,23 @@ input[type=checkbox] { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20
 .statement-row .check-label strong { font-weight: 600; }
 .card-default { display: grid; gap: 4px; margin-top: 12px; }
 .card-default button { justify-self: start; }
+.statement-batch h3 { margin: 0; font-size: 16px; }
+.statement-batch p { margin: 0; }
+.statement-card { border-bottom: 1px solid var(--line); padding-bottom: 20px; }
+.statement-card h3 { font-size: 16px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.statement-group { margin-top: 12px; }
+.statement-group > summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-weight: 500; }
+.ownership-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; font-size: 14px; }
+.ownership-row > span:not(.amount) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ownership-row input { width: 20px; min-height: 20px; flex-shrink: 0; accent-color: var(--ledger); }
+.ownership-row .amount { white-space: nowrap; }
+.statement-category-group { padding: 16px; border-radius: var(--radius); background: var(--ledger-soft); display: grid; gap: 12px; margin: 12px 0; }
+.statement-category-group strong { overflow-wrap: anywhere; }
+.statement-footer { position: sticky; bottom: -24px; background: var(--paper); border-top: 1px solid var(--line); margin-top: 24px; padding: 16px 0 max(16px, env(safe-area-inset-bottom)); display: grid; gap: 12px; z-index: 1; }
+.statement-footer .primary { width: 100%; }
+#statement-feedback:empty { display: none; }
+.statement-row, .statement-group, .statement-review { scroll-margin-bottom: 150px; }
+.statement-dialog :focus-visible { scroll-margin-block: 24px 160px; }
 .suggestion-label { font-size: 12px; color: var(--ledger); }
 @media (max-width: 960px) {
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }

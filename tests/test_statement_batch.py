@@ -50,6 +50,20 @@ def test_local_rules_unknown_merchant_and_intra_statement_duplicates(tmp_path):
     assert data['rows'][1]['suggestion']['category'] is None
 
 
+def test_nonpersonal_unclassified_does_not_teach_personal_category(tmp_path):
+    repo=make_repo(tmp_path)
+    data=batch_preview(1)
+    data['rows'][0]['merchant']='UNKNOWN FAMILY MERCHANT'
+    data=suggest_matches(data,repo._path,42)
+    confirm_rows(repo,42,data,[{'row_key':data['rows'][0]['row_key'],'action':'import','category':'other','is_personal':False}])
+    future=batch_preview(1)
+    future['rows'][0].update(merchant='UNKNOWN FAMILY MERCHANT',amount='99.99',signed_amount='99.99',transaction_date='2026-11-01',posting_date='2026-11-02')
+    identify_rows(future,b'future-family')
+    result=suggest_matches(future,repo._path,42)['rows'][0]
+    assert result['suggestion']['category'] is None
+    assert result['review_group']=='review'
+
+
 def test_confirm_300_rows_atomically_and_reject_repeated_batch(tmp_path):
     repo=make_repo(tmp_path)
     data=suggest_matches(batch_preview(300),repo._path,42)

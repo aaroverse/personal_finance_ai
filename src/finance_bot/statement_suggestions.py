@@ -27,7 +27,7 @@ def preprocess(preview: dict, confirmed_links: dict, card_defaults: dict) -> dic
     for link in confirmed_links.values():
         bank = json.loads(link['statement_json'])
         expense = json.loads(link['expense_json'])
-        if expense['category'] in valid_categories:
+        if expense['category'] in valid_categories and not (expense['category']=='other' and not expense.get('is_personal', True)):
             history[merchant_key(bank['merchant'])].add(expense['category'])
     candidate_uses = Counter(c['id'] for row in preview['rows'] if not row['processed'] for c in row['candidates'])
     repeated = Counter((r['card'],r['transaction_date'],r['amount']) for r in preview['rows']
