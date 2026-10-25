@@ -36,7 +36,7 @@ class PreviewStore:
         with self._lock:
             value = self._items.get(token) if isinstance(token, str) else None
             if not value or value[0] <= time.monotonic() or not secrets.compare_digest(value[1], session):
-                raise RecordConflictError('预览已过期，请重新上传后核对。')
+                raise RecordConflictError('核对会话已过期，请从账单列表重新打开；已保存的进度不会丢失。')
             return copy.deepcopy(value[2])
 
 
@@ -98,6 +98,9 @@ def save_card_default(repo: FinanceRepository, owner: int, preview: dict, body: 
     if not isinstance(card,str) or card not in {c['account'] for c in preview['cards']} or type(body.get('is_personal')) is not bool:
         raise ValueError('请选择这份账单中的卡片及个人支出默认值。')
     with closing(repo._connect()) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
+        from .statement_reviews import check_version
+        check_version(conn, owner, preview)
         conn.execute('''INSERT INTO statement_card_defaults VALUES(?,?,?)
             ON CONFLICT(telegram_user_id,card) DO UPDATE SET is_personal=excluded.is_personal''',
             (owner, card, int(body['is_personal'])))
@@ -115,11 +118,14 @@ def confirm_rows(repo: FinanceRepository, owner: int, preview: dict, bodies: lis
         raise ValueError('同一批次不能重复选择同一明细。')
     with closing(repo._connect()) as conn, conn:
         conn.execute('BEGIN IMMEDIATE')
+        from .statement_reviews import check_version, touch_review
+        check_version(conn, owner, preview)
         expense_index = defaultdict(list)
         for record in conn.execute('SELECT expense_json FROM transactions WHERE telegram_user_id=?', (owner,)):
             expense = json.loads(record['expense_json'])
             expense_index[(expense['currency'], Decimal(expense['amount']))].append(expense)
         results = [_confirm_row(conn, repo, owner, preview, body, expense_index) for body in bodies]
+        touch_review(conn, owner, preview)
     return {'ok': True, 'results': results, 'count': len(results)}
 
 

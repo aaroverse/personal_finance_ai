@@ -14,6 +14,7 @@ from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
 import hmac
+import hashlib
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
@@ -24,8 +25,9 @@ from pydantic import ValidationError
 from .models import ExpenseExtraction
 from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
 from .web_auth import WebAuth, LoginError
-from .statements import MAX_UPLOAD_BYTES, preview_pdf, suggest_matches
+from .statements import MAX_UPLOAD_BYTES, preview_pdf
 from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row, confirm_rows, save_card_default
+from .statement_reviews import prepare_reviews, review_by_source, create_review, open_review, save_progress, list_reviews
 
 
 ASSETS = Path(__file__).parent / "static"
@@ -170,6 +172,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
     auth = auth or WebAuth(reader.path.with_name(reader.path.name + ".web-auth.json"))
     repository = FinanceRepository(reader.path)
     prepare_links(repository)
+    prepare_reviews(repository)
     previews = PreviewStore()
 
     class Handler(BaseHTTPRequestHandler):
@@ -223,6 +226,18 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 except (sqlite3.Error, OSError):
                     self.respond(503, '{"error":"暂时无法读取账本，请检查数据库路径或稍后刷新。"}'.encode(), "application/json")
                 return
+            if parsed.path == '/api/statements':
+                if csrf is None:
+                    self.json_response(401, {'error':'请先登录账本。'})
+                    return
+                try:
+                    page = int(parse_qs(parsed.query).get('page',['1'])[0])
+                    self.json_response(200, list_reviews(repository, reader.owner, page))
+                except ValueError:
+                    self.json_response(400, {'error':'页码无效。'})
+                except sqlite3.Error:
+                    self.json_response(503, {'error':'暂时无法读取账单列表。'})
+                return
             files = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/statement-flow.js": ("statement-flow.js", "text/javascript"), "/style.css": ("style.css", "text/css")}
             if parsed.path not in files:
                 self.respond(404, b"Not found", "text/plain")
@@ -243,7 +258,8 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             path = urlsplit(self.path).path
             statement_upload = path == '/api/statements/preview'
             batch_upload = path == '/api/statements/confirm-batch'
-            if statement_upload or batch_upload:
+            progress_upload = path == '/api/statements/progress'
+            if statement_upload or batch_upload or progress_upload:
                 csrf = auth.session(self.session_token())
                 if csrf is None:
                     self.json_response(401, {"error": "请先登录账本。"})
@@ -253,7 +269,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                     return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= (MAX_UPLOAD_BYTES if statement_upload else (512 * 1024 if batch_upload else 32768)):
+                if not 0 < length <= (MAX_UPLOAD_BYTES if statement_upload else (512 * 1024 if batch_upload or progress_upload else 32768)):
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
@@ -282,6 +298,25 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 auth.logout(token)
                 self.json_response(200, {"ok": True}, cookie="finance_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
                 return
+            if path in {'/api/statements/resume','/api/statements/progress'}:
+                try:
+                    if path.endswith('resume'):
+                        preview = open_review(repository, reader.owner, body.get('review_id'))
+                    else:
+                        preview = previews.get(body.get('preview_id'), token)
+                        preview['progress_version'] = save_progress(repository, reader.owner, preview, body)
+                    preview['preview_id'] = previews.put(token, preview)
+                    if path.endswith('resume'):
+                        self.json_response(200, preview)
+                    else:
+                        self.json_response(200, {'ok':True,'preview_id':preview['preview_id'],'progress_version':preview['progress_version']})
+                except RecordConflictError as exc:
+                    self.json_response(409, {'error':str(exc)})
+                except (ValueError,TypeError,KeyError) as exc:
+                    self.json_response(400, {'error':str(exc) or '审核进度无效。'})
+                except sqlite3.Error:
+                    self.json_response(503, {'error':'进度未保存，请重试；此操作不会入账。'})
+                return
             if path in {'/api/statements/confirm','/api/statements/confirm-batch','/api/statements/card-default'}:
                 try:
                     preview = previews.get(body.get('preview_id'), token)
@@ -292,7 +327,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                         result = {'ok':True, 'preference_saved':True}
                     else:
                         result = confirm_row(repository, reader.owner, preview, body)
-                    updated_preview = suggest_matches(preview, reader.path, reader.owner)
+                    updated_preview = open_review(repository, reader.owner, preview['review_id'])
                     updated_preview['preview_id'] = previews.put(token, updated_preview)
                     result['preview'] = updated_preview
                     self.json_response(200, result)
@@ -314,9 +349,12 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                     if not isinstance(encoded, str):
                         raise ValueError('请选择 PDF 文件。')
                     data = base64.b64decode(encoded, validate=True)
-                    preview = preview_pdf(data)
-                    identify_rows(preview, data)
-                    preview = suggest_matches(preview, reader.path, reader.owner)
+                    review_id = review_by_source(repository, reader.owner, hashlib.sha256(data).hexdigest())
+                    if review_id is None:
+                        preview = preview_pdf(data)
+                        identify_rows(preview, data)
+                        review_id = create_review(repository, reader.owner, preview)
+                    preview = open_review(repository, reader.owner, review_id)
                     preview['preview_id'] = previews.put(token, preview)
                     self.json_response(200, preview)
                 except (binascii.Error, ValueError):

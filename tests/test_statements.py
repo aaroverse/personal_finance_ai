@@ -55,7 +55,8 @@ def pdf_bytes(text=SAMPLE):
 
 def ledger_snapshot(path):
     with closing(sqlite3.connect(path)) as conn:
-        return list(conn.iterdump())
+        # Review drafts now persist on upload; they must never mutate ledger tables.
+        return [line for line in conn.iterdump() if not line.startswith('INSERT INTO "statement_reviews"')]
 
 
 def test_parser_payment_refund_foreign_dates_balance_and_privacy():

@@ -170,6 +170,7 @@ document.querySelector('#next').addEventListener('click', () => {if (page < page
 document.querySelector('#close-detail').addEventListener('click', () => document.querySelector('#detail').close());
 
 function showAuth(setup, message = '') {
+  document.querySelector('#statement-history').close();
   document.querySelector('#statement-confirm').close();
   document.querySelector('#statement-panel').close();
   clearStatementPreview();
@@ -199,7 +200,7 @@ async function post(path, body) {
   const data = await response.json();
   if (!response.ok) {
     if (response.status === 401) showAuth(false, '登录已过期，操作未完成。请重新登录后核对。');
-    throw Object.assign(new Error(data.error || '操作失败，请重试。'), {fields: data.fields || {}});
+    throw Object.assign(new Error(data.error || '操作失败，请重试。'), {fields: data.fields || {},status:response.status});
   }
   return data;
 }
@@ -248,7 +249,7 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
 });
 
 document.querySelector('#logout').addEventListener('click', async () => {
-  try {await post('/api/logout', {}); showAuth(false);}
+  try {await flushStatementProgress();await post('/api/logout', {}); showAuth(false);}
   catch (error) {statusLine.textContent = error.message;}
 });
 
@@ -388,6 +389,118 @@ let statementUndo = null;
 const statementAppliedCards = new Set();
 const statementCardDrafts = new Map();
 const statementChoices = new Map();
+let progressDirty=0,progressSaved=0,progressPromise=null,progressError=null;
+let historyPage=1,historyPages=1,historyBusy=false;
+
+function progressSnapshot() {
+  const choices={};
+  for(const row of currentStatement.rows) if(row.kind==='charge'&&!row.processed) choices[row.row_key]={...getStatementChoice(row)};
+  return {preview_id:currentStatement.preview_id,choices,phase:statementPhase,
+    applied_cards:[...statementAppliedCards],card_drafts:Object.fromEntries(statementCardDrafts)};
+}
+function showProgressStatus() {
+  const section=document.querySelector('#statement-progress');
+  section.hidden=!currentStatement?.review_id;
+  const text=document.querySelector('#statement-progress-status');
+  text.textContent=progressError?.status===401?'登录已过期，本页最新更改尚未保存。重新登录将恢复上次保存的进度。':progressError ? `进度未保存：${progressError.message}` : progressSaved<progressDirty?'正在保存核对进度…':'进度已保存到本机 · 尚未确认的明细不会入账';
+  text.classList.toggle('form-error',!!progressError);
+  const retry=document.querySelector('#statement-progress-retry');retry.hidden=!progressError;
+  retry.textContent=progressError?.status===409?'查看较新进度':progressError?.status===401?'重新登录，恢复已存进度':'重试保存进度';
+}
+function queueStatementProgress() {
+  if(!currentStatement?.review_id)return;
+  progressDirty++;
+  startProgressSave();
+}
+function startProgressSave() {
+  showProgressStatus();
+  if(progressPromise||progressError||!currentStatement?.review_id||progressSaved>=progressDirty)return;
+  const data=currentStatement,generation=statementGeneration;
+  progressPromise=(async()=>{
+    while(progressSaved<progressDirty&&currentStatement===data&&generation===statementGeneration) {
+      const sequence=progressDirty,body=progressSnapshot();
+      try {
+        // A failed autosave must retain in-memory edits instead of clearing them on login expiry.
+        const response=await fetch('/api/statements/progress',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken||''},body:JSON.stringify(body)});
+        const result=await response.json();
+        if(!response.ok)throw Object.assign(new Error(result.error||'请检查连接后重试。'),{status:response.status});
+        if(currentStatement!==data||generation!==statementGeneration)return;
+        data.preview_id=result.preview_id;data.progress_version=result.progress_version;
+        progressSaved=sequence;
+      } catch(error){if(currentStatement===data)progressError=error;return;}
+    }
+  })().finally(()=>{progressPromise=null;showProgressStatus();if(!progressError&&currentStatement?.review_id&&progressSaved<progressDirty)startProgressSave();});
+}
+async function flushStatementProgress() {
+  startProgressSave();
+  while(progressPromise)await progressPromise;
+  if(progressError)throw new Error('核对进度尚未保存。'+progressError.message);
+}
+window.addEventListener('beforeunload',event=>{
+  if(currentStatement?.review_id&&progressSaved<progressDirty){event.preventDefault();event.returnValue='';}
+});
+document.querySelector('#statement-progress-retry').addEventListener('click',async()=>{
+  if(progressError?.status===409){await openStatementHistory(true);return;}
+  if(progressError?.status===401){showAuth(false,'请重新登录，再从已上传账单恢复上次保存的进度；刚才未保存的更改没有入账。');return;}
+  progressError=null;startProgressSave();
+});
+function restoreStatement(data) {
+  statementGeneration++;currentStatement=data;statementUndo=null;
+  progressDirty=0;progressSaved=0;progressError=null;
+  statementChoices.clear();statementAppliedCards.clear();statementCardDrafts.clear();
+  const saved=data.review_state||{};
+  statementPhase=saved.phase||'ownership';
+  for(const row of data.rows) {
+    const defaults=StatementFlow.choice(row),choice=saved.choices?.[row.row_key];
+    if(choice&&!row.processed)for(const key of Object.keys(defaults))if(key in choice)defaults[key]=choice[key];
+    statementChoices.set(row.row_key,defaults);
+  }
+  for(const card of saved.applied_cards||[])statementAppliedCards.add(card);
+  for(const [card,draft] of Object.entries(saved.card_drafts||{}))statementCardDrafts.set(card,draft);
+  renderStatement(data);
+}
+async function openStatementHistory(allowStale=false) {
+  if(historyBusy||statementBusy)return;
+  try {
+    if(!allowStale)await flushStatementProgress();
+    document.querySelector('#statement-panel').close();
+    document.querySelector('#statement-history').showModal();
+    historyPage=1;await loadStatementHistory();
+  }catch(error){document.querySelector('#statement-error').textContent=error.message;}
+}
+async function loadStatementHistory() {
+  historyBusy=true;
+  const list=document.querySelector('#statement-history-items'),errorLine=document.querySelector('#statement-history-error');
+  list.replaceChildren();errorLine.textContent='';document.querySelector('#statement-history-status').textContent='正在读取已保存进度…';
+  document.querySelector('#statement-history-previous').disabled=true;document.querySelector('#statement-history-next').disabled=true;
+  try {
+    const response=await fetch(`/api/statements?page=${historyPage}`,{cache:'no-store'});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'无法读取账单列表。');
+    historyPage=data.page;historyPages=data.pages;
+    for(const item of data.items) {
+      const line=el('article',undefined,'statement-history-row');
+      const label=item.charge_count?{pending:'待核对',partial:'部分完成',complete:'已完成'}[item.status]:'无需导入';
+      line.append(el('h3',`${item.bank==='UOB SG'?'UOB 新加坡':item.bank} · ${item.statement_date}`),el('p',`${label} · ${item.card_count} 张卡 · 已入账 ${item.confirmed_count}/${item.charge_count} 笔消费${item.deferred_count?' · 暂不处理 '+item.deferred_count+' 笔':''}`,'muted'));
+      const button=el('button',item.status==='complete'?'查看账单':'继续核对');button.type='button';
+      button.addEventListener('click',async()=>{
+        if(historyBusy)return;historyBusy=true;button.disabled=true;
+        try {
+          const preview=await post('/api/statements/resume',{review_id:item.id});
+          restoreStatement(preview);document.querySelector('#statement-history').close();
+          document.querySelector('#statement-panel').showModal();document.querySelector('#statement-status').textContent='已恢复本机保存的核对进度。';
+        }catch(error){errorLine.textContent=error.message;}
+        finally{historyBusy=false;button.disabled=false;}
+      });line.append(button);list.append(line);
+    }
+    document.querySelector('#statement-history-status').textContent=data.total?`${data.total} 份账单`:'还没有已上传账单。上传后会自动保存在这里。';
+    document.querySelector('#statement-history-page').textContent=`第 ${historyPage} / ${historyPages} 页`;
+  }catch(error){errorLine.textContent=error.message;document.querySelector('#statement-history-status').textContent='';}
+  finally{historyBusy=false;document.querySelector('#statement-history-previous').disabled=historyPage<=1;document.querySelector('#statement-history-next').disabled=historyPage>=historyPages;}
+}
+for(const id of ['browse-statements','statement-list'])document.querySelector('#'+id).addEventListener('click',()=>openStatementHistory());
+for(const [id,delta] of [['statement-history-previous',-1],['statement-history-next',1]])document.querySelector('#'+id).addEventListener('click',()=>{if(historyBusy)return;historyPage+=delta;loadStatementHistory();});
+document.querySelector('#close-statement-history').addEventListener('click',()=>document.querySelector('#statement-history').close());
+document.querySelector('#statement-history').addEventListener('close',()=>{if(!document.querySelector('#dashboard').hidden)document.querySelector('#open-statement').focus();});
 const statementForm = document.querySelector('#statement-form');
 const statementPreview = document.querySelector('#statement-preview');
 document.querySelector('#open-statement').addEventListener('click', () => document.querySelector('#statement-panel').showModal());
@@ -398,6 +511,7 @@ document.querySelector('#statement-panel').addEventListener('close', () => {
 function clearStatementPreview() {
   statementGeneration++;
   currentStatement = null;
+  progressDirty=0;progressSaved=0;progressError=null;showProgressStatus();
   statementChoices.clear();
   statementPhase = 'ownership';
   statementUndo = null;
@@ -415,16 +529,17 @@ function clearStatementPreview() {
   document.querySelector('#statement-status').textContent = '';
   document.querySelector('#statement-file').removeAttribute('aria-invalid');
 }
-document.querySelector('#statement-clear').addEventListener('click', clearStatementPreview);
+document.querySelector('#statement-clear').addEventListener('click', async()=>{try{await flushStatementProgress();clearStatementPreview();}catch(error){document.querySelector('#statement-error').textContent=error.message;}});
 function showStatementUpload(show) {
   document.querySelector('#statement-upload-controls').hidden=!show;
   document.querySelector('#statement-change').setAttribute('aria-expanded',String(show));
   document.querySelector('#statement-change').textContent=show?'收起上传':'更换账单';
 }
-document.querySelector('#statement-change').addEventListener('click',()=>showStatementUpload(document.querySelector('#statement-upload-controls').hidden));
+document.querySelector('#statement-change').addEventListener('click',async()=>{try{await flushStatementProgress();showStatementUpload(document.querySelector('#statement-upload-controls').hidden);}catch(error){document.querySelector('#statement-error').textContent=error.message;}});
 document.querySelector('#statement-file').addEventListener('change', () => {
   statementGeneration++;
   currentStatement = null;
+  progressDirty=0;progressSaved=0;progressError=null;showProgressStatus();
   statementChoices.clear();
   statementPhase = 'ownership';
   statementUndo = null;
@@ -472,12 +587,7 @@ statementForm.addEventListener('submit', async event => {
     if (generation !== statementGeneration) return;
     const data = await post('/api/statements/preview', {pdf_base64: encoded});
     if (generation !== statementGeneration) return;
-    currentStatement = data;
-    statementChoices.clear();
-    statementPhase = 'ownership';
-    statementUndo = null;
-    statementAppliedCards.clear();statementCardDrafts.clear();
-    renderStatement(data);
+    restoreStatement(data);
     feedback.textContent = '';
   } catch (error) {
     if (generation === statementGeneration) {
@@ -588,6 +698,7 @@ function renderStatement(data) {
   }
   statementPreview.hidden=false;
   updateBatchSummary();
+  queueStatementProgress();
 }
 function categorySelect(value='') {
   const label=el('label','分类');
@@ -613,9 +724,15 @@ function renderCategoryGroups(rows,parent) {
     const form=el('form',undefined,'statement-category-group');
     form.append(el('strong',`${same[0].merchant} · 本卡 ${same.length} 笔待分类`));
     const {label,select}=categorySelect();form.append(label);
+    const previous=new Map(same.map(row=>[row.row_key,{...getStatementChoice(row)}]));
+    select.addEventListener('change',()=>{
+      for(const row of same)Object.assign(getStatementChoice(row),{category:select.value,reviewed:false,dirty:true});
+      queueStatementProgress();
+    });
     const button=el('button',`应用到这 ${same.length} 笔`);button.type='submit';form.append(button);
     form.addEventListener('submit',event=>{
       event.preventDefault();if(statementBusy)return;rememberStatementChoices();
+      for(const [key,value] of previous)statementUndo.set(key,value);
       for(const row of same) Object.assign(getStatementChoice(row),{category:select.value,reviewed:true,dirty:true});
       renderStatement(currentStatement);statementFeedback(`已将本卡这 ${same.length} 笔设为${categoryNames[select.value]}。`);
     });parent.append(form);
@@ -638,7 +755,7 @@ function cardDefaultForm(data,card) {
   const rememberLabel=el('label',undefined,'check-label');
   const remember=el('input');remember.type='checkbox';
   remember.checked=!!draft?.remember;
-  const dirty=()=>{statementCardDrafts.set(card.account,{personal:check.checked,remember:remember.checked});updateBatchSummary();};
+  const dirty=()=>{statementCardDrafts.set(card.account,{personal:check.checked,remember:remember.checked});updateBatchSummary();queueStatementProgress();};
   check.addEventListener('change',dirty);remember.addEventListener('change',dirty);
   rememberLabel.append(remember,document.createTextNode('记住此设置，下次沿用'));
   const save=el('button','应用到本卡明细');save.type='submit';
@@ -661,6 +778,7 @@ function cardDefaultForm(data,card) {
         shell.closest('.statement-card').querySelector('.personal-status').textContent=`未确认消费：${total} 笔个人 · ${pending.length-total} 笔非个人`;
         document.querySelector('#statement-undo').hidden=false;
         updateBatchSummary();statementFeedback(`已调整 ${row.merchant}：${input.checked?'计入':'不计入'}个人支出。`,false);
+        queueStatementProgress();
       });
       item.append(input,el('span',`${row.transaction_date} · ${row.merchant}`),el('span',`${row.amount} SGD`,'amount'));exceptions.append(item);
     }
@@ -670,6 +788,7 @@ function cardDefaultForm(data,card) {
     event.preventDefault();if(statementBusy)return;
     statementBusy=true;form.setAttribute('aria-busy','true');save.disabled=true;
     try {
+      await flushStatementProgress();
       if(remember.checked) {
         const result=await post('/api/statements/card-default',{preview_id:data.preview_id,card:card.account,is_personal:check.checked});
         if(currentStatement!==data)return;
@@ -707,6 +826,7 @@ function statementReviewForm(data,row) {
   const review=el('form',undefined,'statement-review');
   review.setAttribute('aria-label',`处理 ${row.merchant} ${row.amount} SGD`);
   const c=getStatementChoice(row);
+  const beforeEdit={...c};
   const reasons=row.suggestion?.reasons||[];
   if(reasons.length && rowStage(row)==='review') review.append(el('p',reasons.filter(r=>c.is_personal||r!=='分类需要确认').join('；'),'muted'));
   const actionLabel=el('label','入账方式');const action=el('select');action.required=true;
@@ -728,8 +848,14 @@ function statementReviewForm(data,row) {
     const candidate=row.candidates.find(candidate=>String(candidate.id)===action.value);
     if(candidate)select.value=candidate.category;
     syncDuplicate();
+    draftChanged();
   });syncDuplicate();
-  personal.addEventListener('change',()=>{select.required=personal.checked;});
+  const draftChanged=()=>{
+    Object.assign(c,{action:action.value,category:select.value,is_personal:personal.checked,acknowledge:duplicate.checked,reviewed:false,dirty:true});
+    queueStatementProgress();
+  };
+  select.addEventListener('change',draftChanged);duplicate.addEventListener('change',draftChanged);
+  personal.addEventListener('change',()=>{select.required=personal.checked;draftChanged();});
   review.append(el('p','非个人消费可留空分类，保存时归入「其他」。这里只整理，最后统一保存。','muted'));
   const actions=el('div',undefined,'page-actions');
   const done=el('button',rowStage(row)==='review'?'完成此项':'应用修改');done.type='submit';
@@ -744,7 +870,7 @@ function statementReviewForm(data,row) {
     if(StatementFlow.stage(row,next,statementBlocked())!=='ready') {
       document.querySelector('#statement-error').textContent='此项仍有异常：请检查金额、分类或重复确认；也可以暂不处理。';return;
     }
-    rememberStatementChoices();Object.assign(c,next);document.querySelector('#statement-error').textContent='';
+    rememberStatementChoices();statementUndo.set(row.row_key,beforeEdit);Object.assign(c,next);document.querySelector('#statement-error').textContent='';
     renderStatement(currentStatement);statementFeedback('已完成此项，移至已就绪。');
   });return review;
 }
@@ -768,8 +894,9 @@ function rowConfirmationBody(row) {
   return {row_key:row.row_key,action:c.action==='import'?'import':'match',category:StatementFlow.category(c),is_personal:c.is_personal,
     transaction_id:candidate?.id,revision:candidate?.revision,acknowledge_possible_duplicate:c.acknowledge};
 }
-document.querySelector('#statement-confirm-batch').addEventListener('click',()=>{
+document.querySelector('#statement-confirm-batch').addEventListener('click',async()=>{
   if(statementBusy||!currentStatement||statementCardDrafts.size)return;
+  try{await flushStatementProgress();}catch(error){document.querySelector('#statement-error').textContent=error.message;return;}
   if(statementPhase==='ownership'){
     statementPhase='review';statementFeedback('',false);renderStatement(currentStatement);document.querySelector('#statement-step').focus();return;
   }
@@ -808,6 +935,8 @@ document.querySelector('#statement-confirm-save').addEventListener('click', asyn
   for (const button of dialog.querySelectorAll('button')) button.disabled = true;
   dialog.setAttribute('aria-busy', 'true');
   try {
+    await flushStatementProgress();
+    selection.body.preview_id=selection.data.preview_id;
     const result = await post(selection.batch ? '/api/statements/confirm-batch' : '/api/statements/confirm', selection.body);
     if (currentStatement !== selection.data) return;
     currentStatement = result.preview;
