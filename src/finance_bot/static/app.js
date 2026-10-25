@@ -809,8 +809,33 @@ function statementRow(data,row) {
   const heading=el('div',undefined,'statement-row-header');
   heading.append(el('strong',row.merchant),el('span',`${money(row.signed_amount)} SGD`,'amount'));
   line.append(heading,el('p',`消费 ${row.transaction_date} · 入账 ${row.posting_date}`,'muted'));
+  if(row.correction_history?.length) {
+    const history=el('details',undefined,'statement-help-details');
+    history.append(el('summary',`更正历史 · ${row.correction_count} 次`));
+    for(const item of row.correction_history) history.append(el('p',`${new Date(item.created_at).toLocaleString('zh-CN')} · ${item.operation==='unlink'?'解除错误关联，保留原记账':'撤销补录，保留历史'} · 记录 #${item.transaction_id}`,'muted'));
+    if(row.correction_count>row.correction_history.length)history.append(el('p','显示最近 5 次；完整历史保存在本机。','muted'));
+    line.append(history);
+  }
   if(row.processed) {
-    line.append(el('p',`已${row.processed.action==='match'?'关联':'新增'} #${row.processed.transaction_id} · ${row.processed.is_personal?'个人':'非个人'}支出`,'statement-processed'));return line;
+    line.append(el('p',`已${row.processed.action==='match'?'关联':'新增'} #${row.processed.transaction_id} · ${row.processed.is_personal?'个人':'非个人'}支出`,'statement-processed'));
+    const corrections=el('details',undefined,'statement-help-details');corrections.append(el('summary','这笔处理有误？'));
+    corrections.append(el('p','只改分类或个人归属，可在账本交易详情修改。','muted'));
+    const button=el('button',row.processed.action==='match'?'解除错误关联':'撤销这笔补录','quiet');button.type='button';
+    button.addEventListener('click',async()=>{
+      if(statementBusy)return;
+      try {
+        await flushStatementProgress();
+        const saved=row.processed,unlink=saved.action==='match';
+        statementSelection={data:currentStatement,reversal:true,button,body:{preview_id:currentStatement.preview_id,row_key:row.row_key,
+          transaction_id:saved.transaction_id,link_id:saved.link_id,revision:saved.revision,operation:unlink?'unlink':'void_import'}};
+        document.querySelector('#statement-confirm-title').textContent=unlink?'解除这笔关联？':'撤销这笔补录？';
+        document.querySelector('#statement-confirm-save').textContent=unlink?'确认解除关联':'确认撤销补录';
+        document.querySelector('#statement-confirm-description').textContent=`银行明细：${row.merchant}\n${row.amount} SGD · ${row.transaction_date}\n账本记录 #${saved.transaction_id}：${saved.merchant}\n\n${unlink?'只解除账单与这笔记账的关联。原记账保留，支出金额不变；当前分类和个人归属也保留，可在交易详情修改。':`这笔由账单新增的记账将标记为已撤销，退出最近记录。${saved.is_personal?'个人支出将减少 '+row.amount+' SGD。':'原为非个人支出，个人金额不变。'}原记录保留，不永久删除。`}\n\n更正历史会保存。这条账单明细会回到待处理，重新核对后可再次入账。`;
+        document.querySelector('#statement-confirm-duplicate').hidden=true;
+        document.querySelector('#statement-confirm-error').textContent='';
+        document.querySelector('#statement-confirm').showModal();
+      }catch(error){document.querySelector('#statement-error').textContent=error.message;}
+    });corrections.append(button);line.append(corrections);return line;
   }
   if(row.kind!=='charge') {
     line.append(el('p',row.kind==='payment'?'信用卡还款，不重复计作消费。':'贷记／退款，暂不导入；仍需核对原消费。','muted'));return line;
@@ -843,6 +868,9 @@ function statementReviewForm(data,row) {
   const duplicateLabel=el('label',undefined,'check-label');
   const duplicate=el('input');duplicate.type='checkbox';duplicate.checked=c.acknowledge;
   duplicateLabel.append(duplicate,document.createTextNode('已核对，这是另一笔消费，不是重复记录'));review.append(duplicateLabel);
+  const recheckLabel=el('label',undefined,'check-label');
+  const recheck=el('input');recheck.type='checkbox';recheck.checked=!!c.rechecked;recheck.required=!!row.requires_recheck;
+  recheckLabel.append(recheck,document.createTextNode('我已重新核对这笔曾更正的明细'));recheckLabel.hidden=!row.requires_recheck;review.append(recheckLabel);
   const syncDuplicate=()=>{duplicateLabel.hidden=action.value!=='import'||!(row.possible_duplicate_count||row.intra_statement_duplicate);duplicate.required=!duplicateLabel.hidden;};
   action.addEventListener('change',()=>{
     const candidate=row.candidates.find(candidate=>String(candidate.id)===action.value);
@@ -851,10 +879,11 @@ function statementReviewForm(data,row) {
     draftChanged();
   });syncDuplicate();
   const draftChanged=()=>{
-    Object.assign(c,{action:action.value,category:select.value,is_personal:personal.checked,acknowledge:duplicate.checked,reviewed:false,dirty:true});
+    Object.assign(c,{action:action.value,category:select.value,is_personal:personal.checked,acknowledge:duplicate.checked,rechecked:recheck.checked,reviewed:false,dirty:true});
     queueStatementProgress();
   };
   select.addEventListener('change',draftChanged);duplicate.addEventListener('change',draftChanged);
+  recheck.addEventListener('change',draftChanged);
   personal.addEventListener('change',()=>{select.required=personal.checked;draftChanged();});
   review.append(el('p','非个人消费可留空分类，保存时归入「其他」。这里只整理，最后统一保存。','muted'));
   const actions=el('div',undefined,'page-actions');
@@ -866,7 +895,7 @@ function statementReviewForm(data,row) {
   });actions.append(done,defer);review.append(actions);
   review.addEventListener('submit',event=>{
     event.preventDefault();if(statementBusy)return;
-    const next={...c,action:action.value,category:select.value,is_personal:personal.checked,acknowledge:duplicate.checked,reviewed:true,deferred:false,dirty:true};
+    const next={...c,action:action.value,category:select.value,is_personal:personal.checked,acknowledge:duplicate.checked,rechecked:recheck.checked,reviewed:true,deferred:false,dirty:true};
     if(StatementFlow.stage(row,next,statementBlocked())!=='ready') {
       document.querySelector('#statement-error').textContent='此项仍有异常：请检查金额、分类或重复确认；也可以暂不处理。';return;
     }
@@ -892,7 +921,7 @@ function rowConfirmationBody(row) {
   if(rowStage(row)!=='ready')throw new Error(`${row.merchant}：尚未完成处理。`);
   const candidate=row.candidates.find(item=>String(item.id)===c.action);
   return {row_key:row.row_key,action:c.action==='import'?'import':'match',category:StatementFlow.category(c),is_personal:c.is_personal,
-    transaction_id:candidate?.id,revision:candidate?.revision,acknowledge_possible_duplicate:c.acknowledge};
+    transaction_id:candidate?.id,revision:candidate?.revision,acknowledge_possible_duplicate:c.acknowledge,acknowledge_correction:!!c.rechecked};
 }
 document.querySelector('#statement-confirm-batch').addEventListener('click',async()=>{
   if(statementBusy||!currentStatement||statementCardDrafts.size)return;
@@ -937,13 +966,23 @@ document.querySelector('#statement-confirm-save').addEventListener('click', asyn
   try {
     await flushStatementProgress();
     selection.body.preview_id=selection.data.preview_id;
-    const result = await post(selection.batch ? '/api/statements/confirm-batch' : '/api/statements/confirm', selection.body);
+    const result = await post(selection.reversal?'/api/statements/correct':selection.batch ? '/api/statements/confirm-batch' : '/api/statements/confirm', selection.body);
     if (currentStatement !== selection.data) return;
+    if(selection.reversal) {
+      statementFeedback('',false);
+      const row=result.preview.rows.find(item=>item.row_key===selection.body.row_key);
+      const choice=StatementFlow.choice(row);
+      const saved=result.preview.review_state?.choices?.[row.row_key];
+      if(saved){choice.category=saved.category;choice.is_personal=saved.is_personal;}
+      choice.reviewed=false;choice.rechecked=false;choice.acknowledge=false;choice.deferred=false;
+      statementChoices.set(row.row_key,choice);
+      statementPhase='review';
+    }
     currentStatement = result.preview;
     statementUndo = null;
     dialog.close();
     renderStatement(currentStatement);
-    document.querySelector('#statement-status').textContent = selection.batch ? `整批 ${result.count} 笔已保存。匹配不重复增加交易，非个人消费不计入个人统计。` : `已${result.action === 'match' ? '匹配' : '补录'}记录 #${result.transaction_id} · ${result.is_personal ? '计入个人支出' : '非个人支出，不计入统计'}。`;
+    document.querySelector('#statement-status').textContent = selection.reversal ? (result.operation==='unlink'?'已解除关联，原记账保留、支出金额不变。':'已撤销补录，原记录保留历史，已退出支出统计。')+' 账单明细已回到待处理。' : selection.batch ? `整批 ${result.count} 笔已保存。匹配不重复增加交易，非个人消费不计入个人统计。` : `已${result.action === 'match' ? '匹配' : '补录'}记录 #${result.transaction_id} · ${result.is_personal ? '计入个人支出' : '非个人支出，不计入统计'}。`;
     document.querySelector('#statement-status').setAttribute('tabindex', '-1');
     document.querySelector('#statement-status').focus();
     await load();

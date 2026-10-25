@@ -23,7 +23,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import ValidationError
 
 from .models import ExpenseExtraction
-from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision
+from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision, active_transaction_filter
+from .statement_corrections import prepare_corrections, correct_row
 from .web_auth import WebAuth, LoginError
 from .statements import MAX_UPLOAD_BYTES, preview_pdf
 from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row, confirm_rows, save_card_default
@@ -103,6 +104,8 @@ class LedgerReader:
                 sql = f"SELECT * FROM {table} WHERE telegram_user_id = ?"
                 if status == "pending":
                     sql += " AND status = 'pending'"
+                else:
+                    sql += ' AND '+active_transaction_filter(conn)
                 for row in conn.execute(sql, (self.owner,)):
                     expense = ExpenseExtraction.model_validate_json(row["expense_json"])
                     rows.append({
@@ -173,6 +176,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
     repository = FinanceRepository(reader.path)
     prepare_links(repository)
     prepare_reviews(repository)
+    prepare_corrections(repository)
     previews = PreviewStore()
 
     class Handler(BaseHTTPRequestHandler):
@@ -317,10 +321,12 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 except sqlite3.Error:
                     self.json_response(503, {'error':'进度未保存，请重试；此操作不会入账。'})
                 return
-            if path in {'/api/statements/confirm','/api/statements/confirm-batch','/api/statements/card-default'}:
+            if path in {'/api/statements/confirm','/api/statements/confirm-batch','/api/statements/card-default','/api/statements/correct'}:
                 try:
                     preview = previews.get(body.get('preview_id'), token)
-                    if path.endswith('confirm-batch'):
+                    if path.endswith('correct'):
+                        result = correct_row(repository, reader.owner, preview, body)
+                    elif path.endswith('confirm-batch'):
                         result = confirm_rows(repository, reader.owner, preview, body.get('items'))
                     elif path.endswith('card-default'):
                         save_card_default(repository, reader.owner, preview, body)
@@ -393,7 +399,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 fields = {str(error["loc"][0]): error["msg"] for error in exc.errors(include_input=False)}
                 self.json_response(422, {"error": "请检查标记的字段：金额需大于零且最多两位小数，其他字段需完整。", "fields": fields})
             except (DraftNotPendingError, RecordConflictError):
-                self.json_response(409, {"error": "记录已更新或已关联账单。已关联的金额、日期、币种与账户不可改动；分类和个人支出仍可修改。请关闭并刷新后重试。"})
+                self.json_response(409, {"error": "记录已更新、已撤销或已关联账单。请关闭并刷新后重试。仍关联账单的金额、日期、币种与账户不可改动；分类和个人支出可在有效记录中修改。"})
             except (ValueError, TypeError):
                 self.json_response(400, {"error": "请填写完整的交易资料。"})
             except sqlite3.Error:

@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from .database import record_revision
+from .database import record_revision, active_transaction_filter
 from .reconciliation import saved_links
 from .statement_suggestions import preprocess
 
@@ -177,7 +177,7 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
     with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN')
-        records = [dict(r) for r in conn.execute('SELECT * FROM transactions WHERE telegram_user_id=?', (owner,))]
+        records = [dict(r) for r in conn.execute('SELECT * FROM transactions WHERE telegram_user_id=? AND '+active_transaction_filter(conn), (owner,))]
         for record in records:
             record['parsed_expense'] = json.loads(record['expense_json'])
         processed = saved_links(conn, owner)
@@ -186,14 +186,23 @@ def suggest_matches(preview: dict, database: Path, owner: int) -> dict:
             defaults = {r['card']:bool(r['is_personal']) for r in conn.execute(
                 'SELECT card,is_personal FROM statement_card_defaults WHERE telegram_user_id=?', (owner,))}
         linked_ids = {item['transaction_id'] for item in processed.values()}
+        from .statement_corrections import correction_history
+        corrections=correction_history(conn,owner)
     for row in preview['rows']:
         candidates = []
         row['possible_duplicate_count'] = 0
         row['processed'] = None
+        history=corrections.get(row.get('row_key'),[])
+        row['correction_history']=history[:5]
+        row['correction_count']=len(history)
+        row['latest_correction_id']=history[0]['id'] if history else None
+        row['requires_recheck']=bool(history)
         saved = processed.get(row.get('row_key'))
         if saved:
+            expense=json.loads(saved['expense_json'])
             row['processed'] = {'transaction_id':saved['transaction_id'], 'action':saved['action'],
-                'is_personal':json.loads(saved['expense_json']).get('is_personal', True)}
+                'link_id':saved['link_id'],'revision':record_revision(saved),'merchant':expense['merchant'],
+                'is_personal':expense.get('is_personal', True)}
         if row['kind'] == 'charge':
             for record in records:
                 expense = record['parsed_expense']

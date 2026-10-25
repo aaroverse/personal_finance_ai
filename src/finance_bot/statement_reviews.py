@@ -46,7 +46,7 @@ def create_review(repo, owner, preview):
     for key in ('preview_id','review_id','progress_version','review_state','preprocessing'):
         raw.pop(key, None)
     for row in raw['rows']:
-        for key in ('candidates','candidate_count','possible_duplicate_count','processed','suggestion','review_group','intra_statement_duplicate'):
+        for key in ('candidates','candidate_count','possible_duplicate_count','processed','suggestion','review_group','intra_statement_duplicate','correction_history','correction_count','latest_correction_id','requires_recheck'):
             row.pop(key, None)
     for card in raw['cards']:
         card.pop('personal_default', None)
@@ -84,9 +84,12 @@ def touch_review(conn, owner, preview):
 
 
 def candidate_context(row):
-    return {'candidates':[[c['id'],c['revision']] for c in row.get('candidates',[])],
+    context = {'candidates':[[c['id'],c['revision']] for c in row.get('candidates',[])],
         'count':row.get('candidate_count',0), 'duplicates':row.get('possible_duplicate_count',0),
         'intra':bool(row.get('intra_statement_duplicate'))}
+    if row.get('latest_correction_id') is not None:
+        context['correction_id']=row['latest_correction_id']
+    return context
 
 
 def open_review(repo, owner, review_id):
@@ -101,7 +104,7 @@ def open_review(repo, owner, review_id):
     for row in preview['rows']:
         choice = state['choices'].get(row['row_key'])
         if choice and row['kind']=='charge' and not row['processed'] and choice.get('context') != candidate_context(row):
-            choice.update(action='', reviewed=False, acknowledge=False)
+            choice.update(action='', reviewed=False, acknowledge=False, rechecked=False)
             row['suggestion']['reasons'].append('记账记录有变化，请重新核对')
     preview.update(review_id=review_id, progress_version=record['version'], review_state=state)
     return preview
@@ -117,10 +120,12 @@ def validate_state(preview, body):
     cleaned = {}
     flags = ('is_personal','reviewed','deferred','acknowledge','dirty')
     for key, choice in choices.items():
-        if key not in rows or not isinstance(choice,dict) or set(choice)-set(flags)-{'action','category'}:
+        if key not in rows or not isinstance(choice,dict) or set(choice)-set(flags)-{'action','category','rechecked'}:
             raise ValueError('审核进度包含未知明细或字段。')
         if any(type(choice.get(flag)) is not bool for flag in flags):
             raise ValueError('请明确每笔明细的审核状态。')
+        if type(choice.get('rechecked',False)) is not bool:
+            raise ValueError('重新核对状态无效。')
         action, category = choice.get('action'), choice.get('category')
         if not isinstance(action,str) or (action not in {'','import'} and action not in {str(c['id']) for c in rows[key].get('candidates',[])}):
             raise ValueError('关联记录不在当前候选中，请重新核对。')

@@ -72,6 +72,8 @@ def preprocess(preview: dict, confirmed_links: dict, card_defaults: dict) -> dic
                     reasons.append('存在已关联的近似消费')
             if not category:
                 reasons.append('分类需要确认')
+            if row.get('requires_recheck'):
+                reasons.append('这笔明细曾更正，需要重新核对')
             if row['amount']=='0.00':
                 reasons.append('零金额需人工检查，不能补录为消费')
             if repeated[(row['card'],row['transaction_date'],row['amount'])] > 1:

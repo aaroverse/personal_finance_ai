@@ -47,3 +47,7 @@ test('defer, restore and saved states stay separate from personal attribution',(
 test('payments and credits cannot enter expense saving',()=>{
   for(const kind of ['payment','credit']) {const r=row({kind});assert.equal(flow.stage(r,flow.choice(r)),'other');}
 });
+test('corrected rows require a new explicit recheck even with old reviewed approval',()=>{
+  const r=row({requires_recheck:true}),c=flow.choice(r);c.reviewed=true;
+  assert.equal(flow.stage(r,c),'review');c.rechecked=true;assert.equal(flow.stage(r,c),'ready');
+});

@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from pydantic import TypeAdapter
 
-from .database import FinanceRepository, RecordConflictError
+from .database import FinanceRepository, RecordConflictError, active_transaction_filter
 from .models import ExpenseCategory, ExpenseExtraction
 
 
@@ -88,9 +88,9 @@ def saved_links(conn, owner: int) -> dict:
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_links'").fetchone():
         return {}
     return {row['row_key']: dict(row) for row in conn.execute('''
-        SELECT s.row_key,s.transaction_id,s.action,s.statement_json,t.expense_json
+        SELECT s.id AS link_id,s.row_key,s.transaction_id,s.action,s.statement_json,t.expense_json,t.source_text
         FROM statement_links s JOIN transactions t ON t.id=s.transaction_id
-        WHERE s.telegram_user_id=?''', (owner,))}
+        WHERE s.telegram_user_id=? AND ''' + active_transaction_filter(conn,'t'), (owner,))}
 
 
 def save_card_default(repo: FinanceRepository, owner: int, preview: dict, body: dict) -> None:
@@ -121,7 +121,7 @@ def confirm_rows(repo: FinanceRepository, owner: int, preview: dict, bodies: lis
         from .statement_reviews import check_version, touch_review
         check_version(conn, owner, preview)
         expense_index = defaultdict(list)
-        for record in conn.execute('SELECT expense_json FROM transactions WHERE telegram_user_id=?', (owner,)):
+        for record in conn.execute('SELECT expense_json FROM transactions WHERE telegram_user_id=? AND '+active_transaction_filter(conn), (owner,)):
             expense = json.loads(record['expense_json'])
             expense_index[(expense['currency'], Decimal(expense['amount']))].append(expense)
         results = [_confirm_row(conn, repo, owner, preview, body, expense_index) for body in bodies]
@@ -133,6 +133,11 @@ def _confirm_row(conn, repo: FinanceRepository, owner: int, preview: dict, body:
     row = next((r for r in preview['rows'] if r['row_key'] == body.get('row_key')), None)
     if not row or row['kind'] != 'charge' or preview['warnings'] or not all(c['balance_ok'] for c in preview['cards']):
         raise ValueError('只能确认余额校验通过的消费行；还款和贷记暂不支持补录。')
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_corrections'").fetchone():
+        latest=conn.execute('SELECT id FROM statement_corrections WHERE telegram_user_id=? AND row_key=? ORDER BY id DESC LIMIT 1',
+            (owner,row['row_key'])).fetchone()
+        if latest and (row.get('latest_correction_id')!=latest['id'] or body.get('acknowledge_correction') is not True):
+            raise RecordConflictError('这笔明细曾更正，请重新打开账单并明确重新核对后再入账。')
     if type(body.get('is_personal')) is not bool:
         raise ValueError('请明确是否计入个人支出。')
     category = TypeAdapter(ExpenseCategory).validate_python(body.get('category'))
@@ -152,7 +157,7 @@ def _confirm_row(conn, repo: FinanceRepository, owner: int, preview: dict, body:
         candidate = next((c for c in row['candidates'] if c['id'] == body.get('transaction_id')), None)
         if not candidate or body.get('revision') != candidate['revision']:
             raise RecordConflictError('候选不在这次预览中，请重新上传核对。')
-        target = conn.execute('SELECT * FROM transactions WHERE id=? AND telegram_user_id=?',
+        target = conn.execute('SELECT * FROM transactions WHERE id=? AND telegram_user_id=? AND '+active_transaction_filter(conn),
             (candidate['id'], owner)).fetchone()
         repo._check_revision(target, candidate['revision'])
         expense = ExpenseExtraction.model_validate_json(target['expense_json'])

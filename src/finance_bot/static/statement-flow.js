@@ -4,7 +4,7 @@ const StatementFlow = {
     const s = row.suggestion || {};
     return {action:s.action === 'match' ? String(s.transaction_id) : (s.action || ''),
       category:s.category || '', is_personal:s.is_personal ?? true, acknowledge:false,
-      reviewed:false, deferred:false, dirty:false};
+      reviewed:false, deferred:false, dirty:false, rechecked:false};
   },
   category(choice) { return choice.category || (!choice.is_personal ? 'other' : ''); },
   stage(row, choice, blocked=false) {
@@ -12,6 +12,7 @@ const StatementFlow = {
     if (row.kind !== 'charge') return 'other';
     if (choice.deferred) return 'deferred';
     if (blocked || Number(row.amount) <= 0) return 'review';
+    if (row.requires_recheck && !choice.rechecked) return 'review';
     if (!this.category(choice) || !choice.action) return 'review';
     if (choice.action !== 'import' && !row.candidates.some(c => String(c.id) === choice.action)) return 'review';
     if (choice.action === 'import' && (row.possible_duplicate_count || row.intra_statement_duplicate) && !choice.acknowledge) return 'review';

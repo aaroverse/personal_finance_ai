@@ -24,6 +24,12 @@ def record_revision(row: sqlite3.Row | dict) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def active_transaction_filter(connection, alias='transactions') -> str:
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='voided_transactions'").fetchone():
+        return '1'
+    return f'NOT EXISTS (SELECT 1 FROM voided_transactions v WHERE v.transaction_id={alias}.id AND v.telegram_user_id={alias}.telegram_user_id)'
+
+
 @dataclass(frozen=True)
 class DraftRecord:
     id: int
@@ -127,6 +133,10 @@ class FinanceRepository:
             ).fetchone()
             self._check_revision(row, revision)
             updated = expense.model_dump_json()
+            if record_type == 'transactions' and not connection.execute(
+                'SELECT 1 FROM transactions WHERE id=? AND ' + active_transaction_filter(connection), (record_id,)
+            ).fetchone():
+                raise RecordConflictError('这笔补录已撤销，不能修改旧记录。')
             if record_type == 'transactions' and connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE name='statement_links'"
             ).fetchone() and connection.execute(
@@ -267,7 +277,7 @@ class FinanceRepository:
     def get_transaction(self, transaction_id: int) -> TransactionRecord:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+                "SELECT * FROM transactions WHERE id = ? AND " + active_transaction_filter(connection), (transaction_id,)
             ).fetchone()
         if row is None:
             raise LookupError("Transaction does not exist.")
@@ -282,15 +292,14 @@ class FinanceRepository:
                 """
                 SELECT * FROM transactions
                 WHERE telegram_user_id = ?
-                ORDER BY id DESC LIMIT ?
-                """,
+                AND """ + active_transaction_filter(connection) + " ORDER BY id DESC LIMIT ?",
                 (telegram_user_id, safe_limit),
             ).fetchall()
         return [_transaction_from_row(row) for row in rows]
 
     def count_transactions(self) -> int:
         with self._connect() as connection:
-            row = connection.execute("SELECT COUNT(*) AS count FROM transactions").fetchone()
+            row = connection.execute("SELECT COUNT(*) AS count FROM transactions WHERE " + active_transaction_filter(connection)).fetchone()
         return int(row["count"])
 
     def _connect(self) -> sqlite3.Connection:
