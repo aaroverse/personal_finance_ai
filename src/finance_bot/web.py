@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from .models import ExpenseExtraction
 from .database import FinanceRepository, DraftNotPendingError, RecordConflictError, record_revision, active_transaction_filter
 from .statement_corrections import prepare_corrections, correct_row
+from .transaction_deletions import prepare_deletions, change_deletion
 from .web_auth import WebAuth, LoginError
 from .statements import MAX_UPLOAD_BYTES, preview_pdf
 from .reconciliation import PreviewStore, prepare_links, identify_rows, confirm_row, confirm_rows, save_card_default
@@ -47,6 +48,7 @@ class WebSettings(BaseSettings):
     app_timezone: str = "Asia/Singapore"
     web_public_origin: str = ""
     web_tailscale_login: str = ""
+    statement_upload_enabled: bool = False
 
     def remote_access(self) -> tuple[str, str]:
         config_path = self.database_path.with_name(self.database_path.name + '.remote.json')
@@ -82,7 +84,7 @@ class LedgerReader:
         if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
             raise ValueError("Invalid month")
         state = value("state", "confirmed")
-        if state not in {"confirmed", "pending"}:
+        if state not in {"confirmed", "pending", "deleted"}:
             raise ValueError("Invalid state")
         page = int(value("page", "1"))
         if page < 1 or page > 1_000_000:
@@ -96,6 +98,9 @@ class LedgerReader:
         with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN")
+            deleted={}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='deleted_transactions'").fetchone():
+                deleted={r['transaction_id']:dict(r) for r in conn.execute('SELECT * FROM deleted_transactions WHERE telegram_user_id=?',(self.owner,))}
             links = {}
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_links'").fetchone():
                 links = {r['transaction_id']: {**json.loads(r['statement_json']), 'statement_date': r['statement_date']}
@@ -115,11 +120,20 @@ class LedgerReader:
                         "statement": links.get(row['id']) if status == 'confirmed' else None,
                         **expense.model_dump(mode="json"),
                     })
+            for transaction_id, deletion in deleted.items():
+                row=conn.execute('SELECT * FROM transactions WHERE id=? AND telegram_user_id=?',(transaction_id,self.owner)).fetchone()
+                if row is None:continue
+                expense=ExpenseExtraction.model_validate_json(row['expense_json'])
+                rows.append({'id':row['id'],'state':'deleted','revision':record_revision(row),
+                    'source_text':row['source_text'],'created_at':row['created_at'],
+                    'statement':links.get(row['id']),'deleted_at':deletion['deleted_at'],'deletion_reason':deletion['reason'],
+                    **expense.model_dump(mode='json')})
 
+        option_rows=[r for r in rows if (r['state']=='deleted')==(state=='deleted')]
         options = {
-            "months": sorted({r["transaction_date"][:7] for r in rows}, reverse=True),
-            "accounts": sorted({r["payment_account"] for r in rows if r["payment_account"]}),
-            "currencies": sorted({"SGD", "MYR"} | {r["currency"] for r in rows}),
+            "months": sorted({r["transaction_date"][:7] for r in option_rows}, reverse=True),
+            "accounts": sorted({r["payment_account"] for r in option_rows if r["payment_account"]}),
+            "currencies": sorted({"SGD", "MYR"} | {r["currency"] for r in option_rows}),
             "categories": CATEGORIES,
         }
 
@@ -144,7 +158,7 @@ class LedgerReader:
                 groups[(row["currency"], row["category"])] += amount
         selected = sorted(
             [row for row in filtered if row["state"] == state],
-            key=lambda row: (row["transaction_date"], row["id"]), reverse=True,
+            key=lambda row: (row['deleted_at'] if state=='deleted' else row["transaction_date"], row["id"]), reverse=True,
         )
         page_size = 25
         pages = max(1, (len(selected) + page_size - 1) // page_size)
@@ -158,13 +172,14 @@ class LedgerReader:
             ],
             "confirmed_count": len(confirmed),
             "pending_count": sum(row["state"] == "pending" for row in filtered),
+            "deleted_count": sum(row['state']=='deleted' for row in filtered),
             "records": selected[(page - 1) * page_size:page * page_size],
             "total": len(selected), "page": page, "pages": pages,
             "updated_at": datetime.now(self.timezone).isoformat(timespec="seconds"),
         }
 
 
-def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_origin: str = '', tailscale_login: str = '') -> type[BaseHTTPRequestHandler]:
+def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_origin: str = '', tailscale_login: str = '', statements_enabled: bool = True) -> type[BaseHTTPRequestHandler]:
     public_origin = public_origin.rstrip('/')
     remote = urlsplit(public_origin)
     if public_origin or tailscale_login:
@@ -177,6 +192,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
     prepare_links(repository)
     prepare_reviews(repository)
     prepare_corrections(repository)
+    prepare_deletions(repository)
     previews = PreviewStore()
 
     class Handler(BaseHTTPRequestHandler):
@@ -214,6 +230,9 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
             if not self.local_request():
                 return
             parsed = urlsplit(self.path)
+            if parsed.path.startswith('/api/statements') and not statements_enabled:
+                self.json_response(403,{'error':'账单功能已暂时暂停，请使用日常记账。'})
+                return
             csrf = auth.session(self.session_token())
             if parsed.path == "/api/session":
                 self.json_response(200, {"authenticated": csrf is not None, "needs_setup": auth.needs_setup, "csrf": csrf})
@@ -224,6 +243,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                     return
                 try:
                     result = reader.read(parse_qs(parsed.query, keep_blank_values=True))
+                    result['features']={'statements':statements_enabled}
                     self.respond(200, json.dumps(result, ensure_ascii=False).encode(), "application/json")
                 except (ValueError, TypeError):
                     self.respond(400, b'{"error":"Invalid filters"}', "application/json")
@@ -260,6 +280,9 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 self.json_response(415, {"error": "需要 JSON 请求。"})
                 return
             path = urlsplit(self.path).path
+            if path.startswith('/api/statements') and not statements_enabled:
+                self.json_response(403,{'error':'账单功能已暂时暂停，请使用日常记账。'})
+                return
             statement_upload = path == '/api/statements/preview'
             batch_upload = path == '/api/statements/confirm-batch'
             progress_upload = path == '/api/statements/progress'
@@ -368,7 +391,7 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 except (sqlite3.Error, OSError, subprocess.SubprocessError):
                     self.json_response(503, {"error": "暂时无法处理账单，请稍后重试。"})
                 return
-            match = re.fullmatch(r"/api/(transactions|drafts)/([1-9]\d*)/(edit|confirm|cancel)", path)
+            match = re.fullmatch(r"/api/(transactions|drafts)/([1-9]\d*)/(edit|confirm|cancel|delete|restore)", path)
             if not match:
                 self.json_response(404, {"error": "操作不存在。"})
                 return
@@ -378,7 +401,10 @@ def make_handler(reader: LedgerReader, auth: WebAuth | None = None, *, public_or
                 self.json_response(400, {"error": "记录版本无效，请刷新后重试。"})
                 return
             try:
-                if action == "edit":
+                if action in {'delete','restore'}:
+                    if table!='transactions':raise ValueError('草稿请使用取消操作。')
+                    self.json_response(200,change_deletion(repository,reader.owner,int(raw_id),revision,action))
+                elif action == "edit":
                     raw = body.get("expense")
                     if not isinstance(raw, dict):
                         raise ValueError()
@@ -442,7 +468,7 @@ def main() -> None:
             parser.error("Ledger not found. Run from the project folder after logging an expense.")
         FinanceRepository(reader.path).prepare_web_edits()
         origin, login = settings.remote_access()
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader, public_origin=origin, tailscale_login=login))
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader, public_origin=origin, tailscale_login=login,statements_enabled=settings.statement_upload_enabled))
     except (ValueError, OSError):
         parser.error("Check DATABASE_PATH, TELEGRAM_ALLOWED_USER_IDS, APP_TIMEZONE and port. For multiple owners, use --user-id.")
     print(f"账本已启动：http://127.0.0.1:{server.server_port} （Control+C 停止）", flush=True)

@@ -88,7 +88,7 @@ def saved_links(conn, owner: int) -> dict:
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='statement_links'").fetchone():
         return {}
     return {row['row_key']: dict(row) for row in conn.execute('''
-        SELECT s.id AS link_id,s.row_key,s.transaction_id,s.action,s.statement_json,t.expense_json,t.source_text
+        SELECT s.id AS link_id,s.row_key,s.transaction_id,s.action,s.statement_json,t.expense_json,t.source_text,t.lifecycle_version
         FROM statement_links s JOIN transactions t ON t.id=s.transaction_id
         WHERE s.telegram_user_id=? AND ''' + active_transaction_filter(conn,'t'), (owner,))}
 

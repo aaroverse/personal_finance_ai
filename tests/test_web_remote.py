@@ -7,13 +7,16 @@ import pytest
 
 from finance_bot.web import LedgerReader, make_handler
 from finance_bot.web_auth import WebAuth
+from finance_bot.database import FinanceRepository
 
 
 def test_private_proxy_requires_exact_host_identity_and_https_origin(tmp_path):
     origin = 'https://test-device.example.ts.net'
     auth = WebAuth(tmp_path / 'auth.json')
     auth.login('synthetic-test-password', setup=True)
-    reader = LedgerReader(tmp_path / 'not-needed.db', 42)
+    path=tmp_path/'ledger.db'
+    FinanceRepository(path).initialize()
+    reader = LedgerReader(path, 42)
     server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(reader, auth, public_origin=origin, tailscale_login='owner@example.com'))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

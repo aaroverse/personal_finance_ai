@@ -49,6 +49,7 @@ async function load({automatic = false} = {}) {
     if (response.status === 401) {showAuth(false, '登录已过期，请重新登录。'); return;}
     if (!response.ok) throw new Error(data.error || '无法读取账本');
     categoryNames = data.options.categories;
+    document.querySelector('#open-statement').hidden=!data.features?.statements;
     fillOptions('account', [...data.options.accounts, '__unknown__'], {'__unknown__': '未注明账户'});
     fillOptions('currency', data.options.currencies);
     fillOptions('category', Object.keys(categoryNames), categoryNames);
@@ -68,9 +69,12 @@ async function load({automatic = false} = {}) {
     }
     document.querySelector('#confirmed-tab').textContent = `已确认 ${data.confirmed_count}`;
     document.querySelector('#pending-tab').textContent = `待确认 ${data.pending_count}`;
+    document.querySelector('#deleted-tab').textContent = `已删除 ${data.deleted_count || 0}`;
     document.querySelector('#confirmed-tab').setAttribute('aria-pressed', state === 'confirmed');
     document.querySelector('#pending-tab').setAttribute('aria-pressed', state === 'pending');
-    document.querySelector('#pending-note').hidden = state !== 'pending';
+    document.querySelector('#deleted-tab').setAttribute('aria-pressed',state==='deleted');
+    document.querySelector('#pending-note').hidden = state === 'confirmed';
+    document.querySelector('#pending-note').textContent=state==='deleted'?'已删除记录不计入统计。打开一笔记录可恢复。':'点击一笔草稿，检查后确认入账或取消。';
     document.querySelector('#record-count').textContent = `${data.total} 笔记录`;
     const records = document.querySelector('#records');
     records.replaceChildren();
@@ -80,6 +84,7 @@ async function load({automatic = false} = {}) {
       const name = el('span');
       name.append(el('strong', row.merchant), el('small', row.transaction_date));
       if (!row.is_personal) name.append(el('span', '非个人支出', 'personal-status'));
+      if(row.state==='deleted')name.append(el('span','已删除 · 可恢复','personal-status'));
       const classification = el('span', undefined, 'classification');
       classification.append(el('span', categoryNames[row.category] || row.category, 'category-label'), el('small', row.payment_account || '未注明账户'));
       const amount = el('span', money(row.amount), 'amount');
@@ -139,6 +144,9 @@ function showDetail(row) {
   document.querySelector('#review-check').hidden = true;
   document.querySelector('#confirm-record').hidden = row.state !== 'pending';
   document.querySelector('#cancel-record').hidden = row.state !== 'pending';
+  document.querySelector('#edit-start').hidden=row.state==='deleted';
+  document.querySelector('#delete-record').hidden=row.state!=='confirmed';
+  document.querySelector('#restore-record').hidden=row.state!=='deleted';
   document.querySelector('#detail-title').textContent = row.merchant;
   document.querySelector('#detail-amount').textContent = `${row.currency} ${money(row.amount)}`;
   const fields = document.querySelector('#detail-fields');
@@ -147,12 +155,13 @@ function showDetail(row) {
     '消费日期': row.transaction_date,
     '付款账户': row.payment_account || '未注明',
     '分类': categoryNames[row.category] || row.category,
-    '状态': row.state === 'confirmed' ? '已确认' : '待确认 · 尚未入账',
+    '状态': row.state === 'deleted'?'已删除 · 不计入统计':row.state === 'confirmed' ? '已确认' : '待确认 · 尚未入账',
     '个人支出': row.is_personal ? '计入' : '不计入（保留对账记录）',
     '备注': row.note || '—',
     '原始描述': row.source_text,
     '识别提示': row.ambiguities.join('；') || '—',
   })) fields.append(el('dt', name), el('dd', value));
+  if(row.deleted_at)fields.append(el('dt','删除时间'),el('dd',new Date(row.deleted_at).toLocaleString('zh-CN')));
   if (row.statement) {
     for (const [name, value] of Object.entries({'银行商户': row.statement.merchant, '账单卡片':row.statement.card,
       '银行入账日':row.statement.posting_date, '账单日期':row.statement.statement_date})) fields.append(el('dt', name), el('dd', value));
@@ -164,7 +173,7 @@ form.addEventListener('input', () => {filtersDirty = true;});
 form.addEventListener('change', () => {filtersDirty = true;});
 document.querySelector('#refresh').addEventListener('click', load);
 document.querySelector('#clear-filters').addEventListener('click', () => {form.reset(); form.elements.month.value = ''; page = 1; load();});
-for (const tab of ['confirmed', 'pending']) document.querySelector(`#${tab}-tab`).addEventListener('click', () => {state = tab; page = 1; load();});
+for (const tab of ['confirmed', 'pending','deleted']) document.querySelector(`#${tab}-tab`).addEventListener('click', () => {state = tab; page = 1;if(tab==='deleted')form.elements.month.value=''; load();});
 document.querySelector('#previous').addEventListener('click', () => {if (page > 1) {page--; load();}});
 document.querySelector('#next').addEventListener('click', () => {if (page < pages) {page++; load();}});
 document.querySelector('#close-detail').addEventListener('click', () => document.querySelector('#detail').close());
@@ -337,13 +346,16 @@ document.querySelector('#detail').addEventListener('cancel', event => {
   if (document.querySelector('#detail').getAttribute('aria-busy') === 'true') event.preventDefault();
 });
 
-for (const action of ['confirm', 'cancel']) {
+for (const action of ['confirm', 'cancel','delete','restore']) {
   document.querySelector(`#${action}-record`).addEventListener('click', () => {
     reviewAction = action;
     document.querySelector('#detail-actions').hidden = true;
     document.querySelector('#review-check').hidden = false;
-    document.querySelector('#review-message').textContent = action === 'confirm' ? '确认这笔金额、分类和账户正确，并写入账本？' : '取消这份草稿？取消后不会计入支出。';
-    document.querySelector('#review-submit').textContent = action === 'confirm' ? '确认入账' : '确定取消草稿';
+    const messages={confirm:'确认这笔金额、分类和账户正确，并写入账本？',cancel:'取消这份草稿？取消后不会计入支出。',
+      delete:`删除「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？移至已删除后不计入统计，可随时恢复。`,
+      restore:`恢复「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？${currentRecord.is_personal?'恢复后重新计入个人支出。':'此笔为非个人支出，个人统计金额不变。'}`};
+    document.querySelector('#review-message').textContent=messages[action];
+    document.querySelector('#review-submit').textContent = {confirm:'确认入账',cancel:'确定取消草稿',delete:'确认删除',restore:'确认恢复'}[action];
     document.querySelector('#review-submit').focus();
   });
 }
@@ -356,10 +368,11 @@ document.querySelector('#review-submit').addEventListener('click', async () => {
   detailBusy(true);
   document.querySelector('#detail-error').textContent = '';
   try {
-    await post(`/api/drafts/${currentRecord.id}/${reviewAction}`, {revision: currentRecord.revision});
+    const table=['delete','restore'].includes(reviewAction)?'transactions':'drafts';
+    await post(`/api/${table}/${currentRecord.id}/${reviewAction}`, {revision: currentRecord.revision});
     document.querySelector('#detail').close();
     await load();
-    statusLine.textContent = reviewAction === 'confirm' ? '已确认入账。' : '草稿已取消。';
+    statusLine.textContent={confirm:'已确认入账。',cancel:'草稿已取消。',delete:'已移到已删除，不计入统计；可恢复。',restore:'记录已恢复。'}[reviewAction];
   } catch (error) {document.querySelector('#detail-error').textContent = error.message;}
   finally {detailBusy(false);}
 });

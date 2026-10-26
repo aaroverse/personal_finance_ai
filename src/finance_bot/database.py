@@ -21,13 +21,17 @@ class RecordConflictError(DraftNotPendingError):
 def record_revision(row: sqlite3.Row | dict) -> str:
     status = row["status"] if "status" in row.keys() else "confirmed"
     value = row["expense_json"] + "\n" + row["source_text"] + "\n" + status
+    if 'lifecycle_version' in row.keys() and row['lifecycle_version']:
+        value += '\nlifecycle:' + str(row['lifecycle_version'])
     return hashlib.sha256(value.encode()).hexdigest()
 
 
 def active_transaction_filter(connection, alias='transactions') -> str:
-    if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='voided_transactions'").fetchone():
-        return '1'
-    return f'NOT EXISTS (SELECT 1 FROM voided_transactions v WHERE v.transaction_id={alias}.id AND v.telegram_user_id={alias}.telegram_user_id)'
+    clauses=[]
+    for table in ('voided_transactions','deleted_transactions'):
+        if connection.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone():
+            clauses.append(f'NOT EXISTS (SELECT 1 FROM {table} v WHERE v.transaction_id={alias}.id AND v.telegram_user_id={alias}.telegram_user_id)')
+    return ' AND '.join(clauses) or '1'
 
 
 @dataclass(frozen=True)
@@ -81,7 +85,8 @@ class FinanceRepository:
                     telegram_user_id INTEGER NOT NULL,
                     source_text TEXT NOT NULL,
                     expense_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    lifecycle_version INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_drafts_user_status
@@ -136,7 +141,7 @@ class FinanceRepository:
             if record_type == 'transactions' and not connection.execute(
                 'SELECT 1 FROM transactions WHERE id=? AND ' + active_transaction_filter(connection), (record_id,)
             ).fetchone():
-                raise RecordConflictError('这笔补录已撤销，不能修改旧记录。')
+                raise RecordConflictError('这笔记录已删除或撤销，不能修改旧记录。')
             if record_type == 'transactions' and connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE name='statement_links'"
             ).fetchone() and connection.execute(

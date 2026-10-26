@@ -22,7 +22,7 @@
       </form>
     </section>
     <div id="dashboard" hidden>
-    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="open-statement" class="primary" type="button" aria-haspopup="dialog" aria-controls="statement-panel">上传账单</button><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
+    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="open-statement" hidden class="primary" type="button" aria-haspopup="dialog" aria-controls="statement-panel">上传账单</button><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
     <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
     <div id="content" hidden>
       <section class="summary" aria-label="已确认个人消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。</p></details></section>
@@ -41,7 +41,7 @@
               </div></details>
             </div>
           </form>
-          <div class="section-heading"><h2 id="ledger-heading" class="sr-only">交易记录</h2><div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button></div><span id="record-count" class="muted"></span></div>
+          <div class="section-heading"><h2 id="ledger-heading" class="sr-only">交易记录</h2><div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button><button id="deleted-tab" aria-pressed="false" type="button">已删除</button></div><span id="record-count" class="muted"></span></div>
           <p id="pending-note" class="notice" hidden>点击一笔草稿，检查后确认入账或取消。</p>
           <div class="table-head" aria-hidden="true"><span>交易</span><span>分类与账户</span><span>金额</span></div>
           <div id="records"></div>
@@ -100,9 +100,9 @@
       <div class="dialog-actions"><button id="edit-save" class="primary" type="submit">保存修改</button><button id="edit-cancel" class="quiet" type="button">返回详情</button></div>
     </form>
     <p id="detail-error" class="form-error" role="alert"></p>
-    <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button">修改记录</button><button id="confirm-record" class="primary" type="button" hidden>确认入账</button><button id="cancel-record" class="quiet" type="button" hidden>取消草稿</button></div>
+    <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button">修改记录</button><button id="delete-record" class="quiet" type="button" hidden>删除记录</button><button id="restore-record" type="button" hidden>恢复记录</button><button id="confirm-record" class="primary" type="button" hidden>确认入账</button><button id="cancel-record" class="quiet" type="button" hidden>取消草稿</button></div>
     <section id="review-check" class="notice" hidden><p id="review-message"></p><div class="dialog-actions"><button id="review-submit" class="primary" type="button">确定</button><button id="review-back" class="quiet" type="button">返回</button></div></section>
-    <p class="detail-note">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。</p>
+    <p class="detail-note">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。删除记录可在「已删除」中恢复。</p>
   </dialog>
   <dialog id="statement-confirm" aria-labelledby="statement-confirm-title">
     <h2 id="statement-confirm-title">确认这笔账单明细</h2>
