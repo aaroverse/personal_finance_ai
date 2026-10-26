@@ -189,7 +189,7 @@
         else node.setAttribute(attr, value);
       }
     }
-    root.document.getElementById('language').value = language;
+    for (const input of root.document.querySelectorAll('#language input')) input.checked = input.value === language;
   }
   const api = {t, locale, setLanguage, applyLanguage};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

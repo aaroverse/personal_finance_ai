@@ -52,17 +52,21 @@ test('all annotated static UI and basic dynamic UI have translations', () => {
   assert.equal(api.t`第 ${2} / ${4} 页`, 'Page 2 / 4');
   assert.equal(api.t`${2026} 年 ${'10'} 月个人支出`, 'Personal spending · 2026-10');
 });
-test('updates only marked UI nodes, document language and selected option', () => {
+test('updates only marked UI nodes, document language and selected language segment', () => {
   const {api, context} = fixture('en');
   const node = {textContent: '餐饮', getAttribute: () => '餐饮'};
   const original = {textContent: '餐饮'};
-  const select = {};
+  const inputs = [{value: 'zh-Hans'}, {value: 'en'}];
   context.document = {documentElement: {},
-    querySelectorAll: selector => selector === '[data-i18n]' ? [node] : [],
-    getElementById: () => select};
+    querySelectorAll: selector => selector === '[data-i18n]' ? [node] : selector === '#language input' ? inputs : []};
   api.applyLanguage();
   assert.equal(node.textContent, 'Dining');
   assert.equal(original.textContent, '餐饮');
   assert.equal(context.document.documentElement.lang, 'en');
-  assert.equal(select.value, 'en');
+  assert.equal(inputs[0].checked, false);
+  assert.equal(inputs[1].checked, true);
+  api.setLanguage('zh-Hans');
+  api.applyLanguage();
+  assert.equal(inputs[0].checked, true);
+  assert.equal(inputs[1].checked, false);
 });
