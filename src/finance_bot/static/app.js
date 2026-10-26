@@ -14,6 +14,8 @@ let needsSetup = false;
 let currentRecord = null;
 let reviewAction = null;
 let categoryNames = {};
+let ledgerData = null;
+const {t, locale, applyLanguage} = FinanceI18n;
 const money = value => Number(value).toLocaleString('en-SG', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 function el(tag, text, className) {
   const node = document.createElement(tag);
@@ -40,85 +42,16 @@ async function load({automatic = false} = {}) {
   const params = new URLSearchParams(new FormData(form));
   params.set('state', state);
   params.set('page', page);
-  if (!automatic) statusLine.textContent = '正在更新账本…';
+  if (!automatic) statusLine.textContent = t('正在更新账本…');
   statusLine.className = 'status';
   content.setAttribute('aria-busy', 'true');
   try {
     const response = await fetch(`/api/ledger?${params}`, {signal: controller.signal, cache: 'no-store'});
     const data = await response.json();
-    if (response.status === 401) {showAuth(false, '登录已过期，请重新登录。'); return;}
-    if (!response.ok) throw new Error(data.error || '无法读取账本');
-    categoryNames = data.options.categories;
-    document.querySelector('#open-statement').hidden=!data.features?.statements;
-    fillOptions('account', [...data.options.accounts, '__unknown__'], {'__unknown__': '未注明账户'});
-    fillOptions('currency', data.options.currencies);
-    fillOptions('category', Object.keys(categoryNames), categoryNames);
-    document.querySelector('#period-label').textContent = data.month ? `${data.month.replace('-', ' 年 ')} 月个人支出` : '全部月份的个人支出';
-    const activeFilters = ['account', 'currency', 'category'].filter(name => form.elements[name].value).length;
-    document.querySelector('#filter-label').textContent = activeFilters ? `更多筛选 (${activeFilters})` : '更多筛选';
-    const totals = document.querySelector('#totals');
-    totals.replaceChildren();
-    const sortedTotals = Object.entries(data.totals).sort(([a], [b]) => (a === 'SGD' ? -1 : b === 'SGD' ? 1 : a.localeCompare(b)));
-    for (const [currency, amount] of sortedTotals) {
-      const block = el('div', undefined, 'money-block');
-      block.append(el('div', currency === 'SGD' ? '新加坡元' : currency === 'MYR' ? '马来西亚令吉' : currency, 'currency-label'));
-      const value = el('div', undefined, 'money');
-      value.append(el('small', currency === 'SGD' ? 'S$' : currency === 'MYR' ? 'RM' : currency), document.createTextNode(money(amount)));
-      block.append(value);
-      totals.append(block);
-    }
-    document.querySelector('#confirmed-tab').textContent = `已确认 ${data.confirmed_count}`;
-    document.querySelector('#pending-tab').textContent = `待确认 ${data.pending_count}`;
-    document.querySelector('#deleted-tab').textContent = `已删除 ${data.deleted_count || 0}`;
-    document.querySelector('#confirmed-tab').setAttribute('aria-pressed', state === 'confirmed');
-    document.querySelector('#pending-tab').setAttribute('aria-pressed', state === 'pending');
-    document.querySelector('#deleted-tab').setAttribute('aria-pressed',state==='deleted');
-    document.querySelector('#pending-note').hidden = state === 'confirmed';
-    document.querySelector('#pending-note').textContent=state==='deleted'?'已删除记录不计入统计。打开一笔记录可恢复。':'点击一笔草稿，检查后确认入账或取消。';
-    document.querySelector('#record-count').textContent = `${data.total} 笔记录`;
-    const records = document.querySelector('#records');
-    records.replaceChildren();
-    for (const row of data.records) {
-      const button = el('button', undefined, 'transaction');
-      button.type = 'button';
-      const name = el('span');
-      name.append(el('strong', row.merchant), el('small', row.transaction_date));
-      if (!row.is_personal) name.append(el('span', '非个人支出', 'personal-status'));
-      if(row.state==='deleted')name.append(el('span','已删除 · 可恢复','personal-status'));
-      const classification = el('span', undefined, 'classification');
-      classification.append(el('span', categoryNames[row.category] || row.category, 'category-label'), el('small', row.payment_account || '未注明账户'));
-      const amount = el('span', money(row.amount), 'amount');
-      amount.append(el('small', row.currency));
-      button.append(name, classification, amount);
-      button.addEventListener('click', () => showDetail(row));
-      records.append(button);
-    }
-    if (!data.records.length) {
-      const empty = el('div', undefined, 'empty');
-      empty.append(el('strong', state === 'pending' ? '暂无待确认记录' : '暂无符合条件的记录'), el('span', '调整筛选，或到 Telegram 添加记录。'));
-      records.append(empty);
-    }
-    const categories = document.querySelector('#categories');
-    categories.replaceChildren();
-    for (const currency of data.options.currencies) {
-      const rows = data.categories.filter(row => row.currency === currency);
-      if (!rows.length) continue;
-      const group = el('section', undefined, 'category-group');
-      group.append(el('h3', currency));
-      for (const row of rows) {
-        const line = el('div', undefined, 'category-row');
-        line.append(el('span', categoryNames[row.category] || row.category), el('span', money(row.amount)));
-        group.append(line);
-      }
-      categories.append(group);
-    }
-    if (!data.categories.length) categories.append(el('p', '当前范围还没有已确认消费。', 'empty'));
-    page = data.page;
-    pages = data.pages;
-    document.querySelector('#previous').disabled = page <= 1;
-    document.querySelector('#next').disabled = page >= pages;
-    document.querySelector('#page-label').textContent = `第 ${page} / ${pages} 页`;
-    document.querySelector('#updated').textContent = `更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN')}`;
+    if (response.status === 401) {showAuth(false, t('登录已过期，请重新登录。')); return;}
+    if (!response.ok) throw new Error(t(data.error) || t('无法读取账本'));
+    ledgerData = data;
+    renderLedger(data);
     statusLine.textContent = '';
     filtersDirty = false;
     content.hidden = false;
@@ -126,7 +59,7 @@ async function load({automatic = false} = {}) {
     if (error.name === 'AbortError') return;
     // Hide stale amounts when fresh data cannot be loaded.
     content.hidden = true;
-    statusLine.textContent = `读取失败：${error.message}。请点“刷新账本”重试。`;
+    statusLine.textContent = t`读取失败：${t(error.message)}。请点“刷新账本”重试。`;
     statusLine.className = 'status error';
   } finally {
     if (controller === requestController) {
@@ -135,6 +68,80 @@ async function load({automatic = false} = {}) {
     }
   }
 }
+function renderLedger(data) {
+  categoryNames = Object.fromEntries(Object.entries(data.options.categories).map(([key, label]) => [key, t(label)]));
+  document.querySelector('#open-statement').hidden=!data.features?.statements;
+  fillOptions('account', [...data.options.accounts, '__unknown__'], {'__unknown__': t('未注明账户')});
+  fillOptions('currency', data.options.currencies);
+  fillOptions('category', Object.keys(categoryNames), categoryNames);
+  document.querySelector('#period-label').textContent = data.month ? t`${data.month.split('-')[0]} 年 ${data.month.split('-')[1]} 月个人支出` : t('全部月份的个人支出');
+  const activeFilters = ['account', 'currency', 'category'].filter(name => form.elements[name].value).length;
+  document.querySelector('#filter-label').textContent = activeFilters ? t`更多筛选 (${activeFilters})` : t('更多筛选');
+  const totals = document.querySelector('#totals');
+  totals.replaceChildren();
+  const sortedTotals = Object.entries(data.totals).sort(([a], [b]) => (a === 'SGD' ? -1 : b === 'SGD' ? 1 : a.localeCompare(b)));
+  for (const [currency, amount] of sortedTotals) {
+    const block = el('div', undefined, 'money-block');
+    block.append(el('div', currency === 'SGD' ? t('新加坡元') : currency === 'MYR' ? t('马来西亚令吉') : currency, 'currency-label'));
+    const value = el('div', undefined, 'money');
+    value.append(el('small', currency === 'SGD' ? 'S$' : currency === 'MYR' ? 'RM' : currency), document.createTextNode(money(amount)));
+    block.append(value);
+    totals.append(block);
+  }
+  document.querySelector('#confirmed-tab').textContent = t`已确认 ${data.confirmed_count}`;
+  document.querySelector('#pending-tab').textContent = t`待确认 ${data.pending_count}`;
+  document.querySelector('#deleted-tab').textContent = t`已删除 ${data.deleted_count || 0}`;
+  document.querySelector('#confirmed-tab').setAttribute('aria-pressed', state === 'confirmed');
+  document.querySelector('#pending-tab').setAttribute('aria-pressed', state === 'pending');
+  document.querySelector('#deleted-tab').setAttribute('aria-pressed',state==='deleted');
+  document.querySelector('#pending-note').hidden = state === 'confirmed';
+  document.querySelector('#pending-note').textContent=state==='deleted'?t('已删除记录不计入统计。打开一笔记录可恢复。'):t('点击一笔草稿，检查后确认入账或取消。');
+  document.querySelector('#record-count').textContent = t`${data.total} 笔记录`;
+  const records = document.querySelector('#records');
+  records.replaceChildren();
+  for (const row of data.records) {
+    const button = el('button', undefined, 'transaction');
+    button.type = 'button';
+    const name = el('span');
+    name.append(el('strong', row.merchant), el('small', row.transaction_date));
+    if (!row.is_personal) name.append(el('span', t('非个人支出'), 'personal-status'));
+    if(row.state==='deleted')name.append(el('span',t('已删除 · 可恢复'),'personal-status'));
+    const classification = el('span', undefined, 'classification');
+    classification.append(el('span', categoryNames[row.category] || row.category, 'category-label'), el('small', row.payment_account || t('未注明账户')));
+    const amount = el('span', money(row.amount), 'amount');
+    amount.append(el('small', row.currency));
+    button.append(name, classification, amount);
+    button.addEventListener('click', () => showDetail(row));
+    records.append(button);
+  }
+  if (!data.records.length) {
+    const empty = el('div', undefined, 'empty');
+    empty.append(el('strong', state === 'pending' ? t('暂无待确认记录') : t('暂无符合条件的记录')), el('span', t('调整筛选，或到 Telegram 添加记录。')));
+    records.append(empty);
+  }
+  const categories = document.querySelector('#categories');
+  categories.replaceChildren();
+  for (const currency of data.options.currencies) {
+    const rows = data.categories.filter(row => row.currency === currency);
+    if (!rows.length) continue;
+    const group = el('section', undefined, 'category-group');
+    group.append(el('h3', currency));
+    for (const row of rows) {
+      const line = el('div', undefined, 'category-row');
+      line.append(el('span', categoryNames[row.category] || row.category), el('span', money(row.amount)));
+      group.append(line);
+    }
+    categories.append(group);
+  }
+  if (!data.categories.length) categories.append(el('p', t('当前范围还没有已确认消费。'), 'empty'));
+  page = data.page;
+  pages = data.pages;
+  document.querySelector('#previous').disabled = page <= 1;
+  document.querySelector('#next').disabled = page >= pages;
+  document.querySelector('#page-label').textContent = t`第 ${page} / ${pages} 页`;
+  document.querySelector('#updated').textContent = t`更新于 ${new Date(data.updated_at).toLocaleTimeString(locale())}`;
+}
+
 function showDetail(row) {
   currentRecord = row;
   document.querySelector('#detail-error').textContent = '';
@@ -152,19 +159,19 @@ function showDetail(row) {
   const fields = document.querySelector('#detail-fields');
   fields.replaceChildren();
   for (const [name, value] of Object.entries({
-    '消费日期': row.transaction_date,
-    '付款账户': row.payment_account || '未注明',
-    '分类': categoryNames[row.category] || row.category,
-    '状态': row.state === 'deleted'?'已删除 · 不计入统计':row.state === 'confirmed' ? '已确认' : '待确认 · 尚未入账',
-    '个人支出': row.is_personal ? '计入' : '不计入（保留对账记录）',
-    '备注': row.note || '—',
-    '原始描述': row.source_text,
-    '识别提示': row.ambiguities.join('；') || '—',
+    [t('消费日期')]: row.transaction_date,
+    [t('付款账户')]: row.payment_account || t('未注明'),
+    [t('分类')]: categoryNames[row.category] || row.category,
+    [t('状态')]: row.state === 'deleted'?t('已删除 · 不计入统计'):row.state === 'confirmed' ? t('已确认') : t('待确认 · 尚未入账'),
+    [t('个人支出')]: row.is_personal ? t('计入') : t('不计入（保留对账记录）'),
+    [t('备注')]: row.note || '—',
+    [t('原始描述')]: row.source_text,
+    [t('识别提示')]: row.ambiguities.join('；') || '—',
   })) fields.append(el('dt', name), el('dd', value));
-  if(row.deleted_at)fields.append(el('dt','删除时间'),el('dd',new Date(row.deleted_at).toLocaleString('zh-CN')));
+  if(row.deleted_at)fields.append(el('dt',t('删除时间')),el('dd',new Date(row.deleted_at).toLocaleString(locale())));
   if (row.statement) {
-    for (const [name, value] of Object.entries({'银行商户': row.statement.merchant, '账单卡片':row.statement.card,
-      '银行入账日':row.statement.posting_date, '账单日期':row.statement.statement_date})) fields.append(el('dt', name), el('dd', value));
+    for (const [name, value] of Object.entries({[t('银行商户')]: row.statement.merchant, [t('账单卡片')]:row.statement.card,
+      [t('银行入账日')]:row.statement.posting_date, [t('账单日期')]:row.statement.statement_date})) fields.append(el('dt', name), el('dd', value));
   }
   document.querySelector('#detail').showModal();
 }
@@ -189,9 +196,7 @@ function showAuth(setup, message = '') {
   document.querySelector('#detail').close();
   document.querySelector('#dashboard').hidden = true;
   document.querySelector('#auth-panel').hidden = false;
-  document.querySelector('#auth-title').textContent = setup ? '设置账本密码' : '登录账本';
-  document.querySelector('#auth-description').textContent = setup ? '首次使用，请设置至少 12 个字符的页面密码。密码仅保存在本机，不是银行或 Telegram 密码。' : '输入本机页面密码，查看和管理账本。';
-  document.querySelector('#auth-submit').textContent = setup ? '设置并进入' : '登录';
+  renderAuthLabels();
   document.querySelector('#auth-confirm-label').hidden = !setup;
   const password = document.querySelector('#auth-password');
   password.minLength = setup ? 12 : 1;
@@ -208,8 +213,8 @@ async function post(path, body) {
   });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401) showAuth(false, '登录已过期，操作未完成。请重新登录后核对。');
-    throw Object.assign(new Error(data.error || '操作失败，请重试。'), {fields: data.fields || {},status:response.status});
+    if (response.status === 401) showAuth(false, t('登录已过期，操作未完成。请重新登录后核对。'));
+    throw Object.assign(new Error(t(data.error) || t('操作失败，请重试。')), {fields: data.fields || {},status:response.status});
   }
   return data;
 }
@@ -235,7 +240,7 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
   confirmation.removeAttribute('aria-invalid');
   if (needsSetup && password.value !== confirmation.value) {
     confirmation.setAttribute('aria-invalid', 'true');
-    error.textContent = '两次输入的密码不一致。';
+    error.textContent = t('两次输入的密码不一致。');
     confirmation.focus();
     return;
   }
@@ -249,7 +254,7 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
     confirmation.value = '';
     await openDashboard();
   } catch (failure) {
-    error.textContent = failure.message;
+    error.textContent = t(failure.message);
     password.setAttribute('aria-invalid', 'true');
   } finally {
     submit.disabled = false;
@@ -259,7 +264,7 @@ document.querySelector('#auth-form').addEventListener('submit', async event => {
 
 document.querySelector('#logout').addEventListener('click', async () => {
   try {await flushStatementProgress();await post('/api/logout', {}); showAuth(false);}
-  catch (error) {statusLine.textContent = error.message;}
+  catch (error) {statusLine.textContent = t(error.message);}
 });
 
 document.querySelector('#edit-start').addEventListener('click', () => {
@@ -328,13 +333,13 @@ document.querySelector('#edit-form').addEventListener('submit', async event => {
     }
     document.querySelector('#detail').close();
     await load();
-    statusLine.textContent = currentRecord.state === 'pending' ? '草稿修改已保存，仍需确认入账。' : '修改已保存。';
+    statusLine.textContent = currentRecord.state === 'pending' ? t('草稿修改已保存，仍需确认入账。') : t('修改已保存。');
   } catch (error) {
-    document.querySelector('#detail-error').textContent = error.message;
+    document.querySelector('#detail-error').textContent = t(error.message);
     for (const name of Object.keys(error.fields || {})) {
       if (!editForm.elements[name]) continue;
       editForm.elements[name].setAttribute('aria-invalid', 'true');
-      document.querySelector(`#error-${name}`).textContent = name === 'amount' ? '金额需大于零，且最多两位小数。' : '请检查此字段的格式与长度。';
+      document.querySelector(`#error-${name}`).textContent = name === 'amount' ? t('金额需大于零，且最多两位小数。') : t('请检查此字段的格式与长度。');
     }
   } finally {
     detailBusy(false);
@@ -351,11 +356,11 @@ for (const action of ['confirm', 'cancel','delete','restore']) {
     reviewAction = action;
     document.querySelector('#detail-actions').hidden = true;
     document.querySelector('#review-check').hidden = false;
-    const messages={confirm:'确认这笔金额、分类和账户正确，并写入账本？',cancel:'取消这份草稿？取消后不会计入支出。',
-      delete:`删除「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？移至已删除后不计入统计，可随时恢复。`,
-      restore:`恢复「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？${currentRecord.is_personal?'恢复后重新计入个人支出。':'此笔为非个人支出，个人统计金额不变。'}`};
+    const messages={confirm:t('确认这笔金额、分类和账户正确，并写入账本？'),cancel:t('取消这份草稿？取消后不会计入支出。'),
+      delete:t`删除「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？移至已删除后不计入统计，可随时恢复。`,
+      restore:t`恢复「${currentRecord.merchant}」${currentRecord.currency} ${money(currentRecord.amount)}？${currentRecord.is_personal?t('恢复后重新计入个人支出。'):t('此笔为非个人支出，个人统计金额不变。')}`};
     document.querySelector('#review-message').textContent=messages[action];
-    document.querySelector('#review-submit').textContent = {confirm:'确认入账',cancel:'确定取消草稿',delete:'确认删除',restore:'确认恢复'}[action];
+    document.querySelector('#review-submit').textContent = {confirm:t('确认入账'),cancel:t('确定取消草稿'),delete:t('确认删除'),restore:t('确认恢复')}[action];
     document.querySelector('#review-submit').focus();
   });
 }
@@ -372,8 +377,8 @@ document.querySelector('#review-submit').addEventListener('click', async () => {
     await post(`/api/${table}/${currentRecord.id}/${reviewAction}`, {revision: currentRecord.revision});
     document.querySelector('#detail').close();
     await load();
-    statusLine.textContent={confirm:'已确认入账。',cancel:'草稿已取消。',delete:'已移到已删除，不计入统计；可恢复。',restore:'记录已恢复。'}[reviewAction];
-  } catch (error) {document.querySelector('#detail-error').textContent = error.message;}
+    statusLine.textContent={confirm:t('已确认入账。'),cancel:t('草稿已取消。'),delete:t('已移到已删除，不计入统计；可恢复。'),restore:t('记录已恢复。')}[reviewAction];
+  } catch (error) {document.querySelector('#detail-error').textContent = t(error.message);}
   finally {detailBusy(false);}
 });
 
@@ -384,7 +389,7 @@ fetch('/api/session', {cache: 'no-store'}).then(response => {
   if (!session.authenticated) {showAuth(session.needs_setup); return;}
   csrfToken = session.csrf;
   return openDashboard();
-}).catch(() => showAuth(false, '无法连接账本服务，请确认服务正在运行后刷新页面。'));
+}).catch(() => showAuth(false, t('无法连接账本服务，请确认服务正在运行后刷新页面。')));
 
 // Poll only the local ledger; never interrupt editing, details, focus, or an active request.
 setInterval(() => {
@@ -392,6 +397,24 @@ setInterval(() => {
   if (document.querySelector('#detail').open || document.querySelector('#statement-panel').open || document.querySelector('#statement-confirm').open || document.activeElement?.closest('form, dialog, #records')) return;
   load({automatic: true});
 }, 5000);
+
+
+function renderAuthLabels() {
+  document.querySelector('#auth-title').textContent = needsSetup ? t('设置账本密码') : t('登录账本');
+  document.querySelector('#auth-description').textContent = needsSetup ? t('首次使用，请设置至少 12 个字符的页面密码。密码仅保存在本机，不是银行或 Telegram 密码。') : t('输入本机页面密码，查看和管理账本。');
+  document.querySelector('#auth-submit').textContent = needsSetup ? t('设置并进入') : t('登录');
+}
+applyLanguage();
+document.querySelector('#language').addEventListener('change', event => {
+  FinanceI18n.setLanguage(event.target.value);
+  applyLanguage();
+  renderAuthLabels();
+  if (ledgerData && initialized) renderLedger(ledgerData);
+  for (const id of ['auth-error', 'status']) {
+    const node = document.getElementById(id);
+    node.textContent = t(node.textContent);
+  }
+});
 
 let statementBusy = false;
 let statementGeneration = 0;

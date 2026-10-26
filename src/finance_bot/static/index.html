@@ -4,57 +4,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>我的账本 · Personal Finance</title>
+  <title data-i18n="我的账本 · Personal Finance">我的账本 · Personal Finance</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/statement-flow.js" defer></script>
+  <script src="/i18n.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/">Personal Finance</a><span class="local"><i aria-hidden="true"></i> 私人账本</span></header>
+  <header class="topbar"><a class="brand" href="/">Personal Finance</a><div class="topbar-tools"><span class="local"><i aria-hidden="true"></i> <span data-i18n="私人账本">私人账本</span></span><label class="language-control" for="language"><span>Language / 语言</span><select id="language" aria-label="Language / 语言"><option value="zh-Hans" lang="zh-Hans">中文</option><option value="en" lang="en">English</option></select></label></div></header>
   <main>
     <section id="auth-panel" class="auth-panel" hidden aria-labelledby="auth-title">
-      <h1 id="auth-title">登录账本</h1><p id="auth-description" class="muted"></p>
+      <h1 id="auth-title"><span data-i18n="登录账本">登录账本</span></h1><p id="auth-description" class="muted"></p>
       <form id="auth-form">
-        <label for="auth-password">页面密码<input id="auth-password" type="password" required maxlength="128" autocomplete="current-password" aria-describedby="auth-error"></label>
-        <label for="auth-confirm" id="auth-confirm-label" hidden>再次输入密码<input id="auth-confirm" type="password" maxlength="128" autocomplete="new-password" aria-describedby="auth-error"></label>
+        <label for="auth-password"><span data-i18n="页面密码">页面密码</span><input id="auth-password" type="password" required maxlength="128" autocomplete="current-password" aria-describedby="auth-error"></label>
+        <label for="auth-confirm" id="auth-confirm-label" hidden><span data-i18n="再次输入密码">再次输入密码</span><input id="auth-confirm" type="password" maxlength="128" autocomplete="new-password" aria-describedby="auth-error"></label>
         <p id="auth-error" class="form-error" role="alert"></p>
-        <button id="auth-submit" type="submit" class="primary">登录</button>
+        <button id="auth-submit" type="submit" class="primary"><span data-i18n="登录">登录</span></button>
       </form>
     </section>
     <div id="dashboard" hidden>
-    <section class="intro"><div><h1>我的账本</h1><p id="period-label" class="muted">本月已确认消费</p></div><div class="page-actions"><button id="open-statement" hidden class="primary" type="button" aria-haspopup="dialog" aria-controls="statement-panel">上传账单</button><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新</button><button id="logout" type="button" class="quiet">退出</button></div></section>
-    <p id="status" class="status" role="status" aria-live="polite">正在读取账本…</p>
+    <section class="intro"><div><h1><span data-i18n="我的账本">我的账本</span></h1><p id="period-label" class="muted"><span data-i18n="本月已确认消费">本月已确认消费</span></p></div><div class="page-actions"><button id="open-statement" hidden class="primary" type="button" aria-haspopup="dialog" aria-controls="statement-panel"><span data-i18n="上传账单">上传账单</span></button><button id="refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg><span data-i18n="刷新">刷新</span></button><button id="logout" type="button" class="quiet"><span data-i18n="退出">退出</span></button></div></section>
+    <p id="status" class="status" role="status" aria-live="polite"><span data-i18n="正在读取账本…">正在读取账本…</span></p>
     <div id="content" hidden>
-      <section class="summary" aria-label="已确认个人消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary>统计范围</summary><p>仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。</p></details></section>
+      <section class="summary" aria-label="已确认个人消费汇总" data-i18n-aria-label="已确认个人消费汇总"><div id="totals" class="totals"></div><details class="summary-help"><summary><span data-i18n="统计范围">统计范围</span></summary><p><span data-i18n="仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。">仅汇总计入个人支出的已确认消费。非个人记录、待确认、转账和取现不计入；流水仍保留。</span></p></details></section>
       <div class="workspace">
         <section class="ledger" aria-labelledby="ledger-heading">
-          <form id="filters" class="filters" aria-label="筛选账本">
+          <form id="filters" class="filters" aria-label="筛选账本" data-i18n-aria-label="筛选账本">
             <div class="filter-main">
-              <label class="month-label" for="month">月份<input id="month" name="month" type="month"></label>
-              <label class="search" for="search">搜索<input id="search" name="q" type="search" maxlength="200" placeholder="商户或备注"></label>
-              <button type="submit" class="primary">应用</button>
-              <details id="advanced-filters" class="advanced-filters"><summary id="filter-label">更多筛选</summary><div class="filter-extra">
-                <label for="account">付款账户<select id="account" name="account"><option value="">全部账户</option></select></label>
-                <label for="currency">币种<select id="currency" name="currency"><option value="">全部币种</option></select></label>
-                <label for="category">分类<select id="category" name="category"><option value="">全部分类</option></select></label>
-                <button type="button" id="clear-filters" class="quiet">清除筛选</button>
+              <label class="month-label" for="month"><span data-i18n="月份">月份</span><input id="month" name="month" type="month"></label>
+              <label class="search" for="search"><span data-i18n="搜索">搜索</span><input id="search" name="q" type="search" maxlength="200" placeholder="商户或备注" data-i18n-placeholder="商户或备注"></label>
+              <button type="submit" class="primary"><span data-i18n="应用">应用</span></button>
+              <details id="advanced-filters" class="advanced-filters"><summary id="filter-label"><span data-i18n="更多筛选">更多筛选</span></summary><div class="filter-extra">
+                <label for="account"><span data-i18n="付款账户">付款账户</span><select id="account" name="account"><option value="" data-i18n="全部账户">全部账户</option></select></label>
+                <label for="currency"><span data-i18n="币种">币种</span><select id="currency" name="currency"><option value="" data-i18n="全部币种">全部币种</option></select></label>
+                <label for="category"><span data-i18n="分类">分类</span><select id="category" name="category"><option value="" data-i18n="全部分类">全部分类</option></select></label>
+                <button type="button" id="clear-filters" class="quiet"><span data-i18n="清除筛选">清除筛选</span></button>
               </div></details>
             </div>
           </form>
-          <div class="section-heading"><h2 id="ledger-heading" class="sr-only">交易记录</h2><div class="tabs" role="group" aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button">已确认</button><button id="pending-tab" aria-pressed="false" type="button">待确认</button><button id="deleted-tab" aria-pressed="false" type="button">已删除</button></div><span id="record-count" class="muted"></span></div>
-          <p id="pending-note" class="notice" hidden>点击一笔草稿，检查后确认入账或取消。</p>
-          <div class="table-head" aria-hidden="true"><span>交易</span><span>分类与账户</span><span>金额</span></div>
+          <div class="section-heading"><h2 id="ledger-heading" class="sr-only"><span data-i18n="交易记录">交易记录</span></h2><div class="tabs" role="group" aria-label="记录状态" data-i18n-aria-label="记录状态"><button id="confirmed-tab" aria-pressed="true" type="button"><span data-i18n="已确认">已确认</span></button><button id="pending-tab" aria-pressed="false" type="button"><span data-i18n="待确认">待确认</span></button><button id="deleted-tab" aria-pressed="false" type="button"><span data-i18n="已删除">已删除</span></button></div><span id="record-count" class="muted"></span></div>
+          <p id="pending-note" class="notice" hidden><span data-i18n="点击一笔草稿，检查后确认入账或取消。">点击一笔草稿，检查后确认入账或取消。</span></p>
+          <div class="table-head" aria-hidden="true"><span><span data-i18n="交易">交易</span></span><span><span data-i18n="分类与账户">分类与账户</span></span><span><span data-i18n="金额">金额</span></span></div>
           <div id="records"></div>
-          <div class="pagination"><button type="button" id="previous" class="quiet">上一页</button><span id="page-label"></span><button type="button" id="next" class="quiet">下一页</button></div>
+          <div class="pagination"><button type="button" id="previous" class="quiet"><span data-i18n="上一页">上一页</span></button><span id="page-label"></span><button type="button" id="next" class="quiet"><span data-i18n="下一页">下一页</span></button></div>
         </section>
-        <aside class="breakdown" aria-labelledby="breakdown-heading"><h2 id="breakdown-heading">分类支出</h2><div id="categories"></div></aside>
+        <aside class="breakdown" aria-labelledby="breakdown-heading"><h2 id="breakdown-heading"><span data-i18n="分类支出">分类支出</span></h2><div id="categories"></div></aside>
       </div>
     </div>
     <footer><span id="updated"></span></footer>
     </div>
   </main>
   <dialog id="statement-panel" class="statement-dialog" aria-labelledby="statement-title" aria-describedby="statement-help">
-    <div class="dialog-top"><h2 id="statement-title">上传账单</h2><button id="close-statement" class="quiet" type="button" autofocus>关闭</button></div>
+    <div class="dialog-top"><h2 id="statement-title"><span data-i18n="上传账单">上传账单</span></h2><button id="close-statement" class="quiet" type="button" autofocus>关闭</button></div>
     <div id="statement-upload-controls">
     <p id="statement-help" class="muted">选择 PDF，自动识别并保存核对进度。已有账单可直接继续。</p>
     <button id="browse-statements" class="quiet" type="button" aria-haspopup="dialog" aria-controls="statement-history">查看已上传账单</button>
@@ -82,27 +83,27 @@
     <p id="statement-history-status" role="status"></p>
     <p id="statement-history-error" class="form-error" role="alert"></p>
     <div id="statement-history-items"></div>
-    <div class="pagination"><button id="statement-history-previous" type="button">上一页</button><span id="statement-history-page"></span><button id="statement-history-next" type="button">下一页</button></div>
+    <div class="pagination"><button id="statement-history-previous" type="button"><span data-i18n="上一页">上一页</span></button><span id="statement-history-page"></span><button id="statement-history-next" type="button"><span data-i18n="下一页">下一页</span></button></div>
   </dialog>
-  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-top"><span class="muted">交易详情</span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情">关闭 ×</button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl>
+  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-top"><span class="muted"><span data-i18n="交易详情">交易详情</span></span><button id="close-detail" type="button" class="quiet" aria-label="关闭详情" data-i18n-aria-label="关闭详情"><span data-i18n="关闭 ×">关闭 ×</span></button></div><h2 id="detail-title"></h2><p id="detail-amount" class="detail-amount"></p><dl id="detail-fields"></dl>
     <form id="edit-form" class="edit-form" hidden>
-      <label for="edit-merchant">商户或消费描述<input id="edit-merchant" name="merchant" required maxlength="120" aria-describedby="error-merchant"><span id="error-merchant" class="field-error"></span></label>
+      <label for="edit-merchant"><span data-i18n="商户或消费描述">商户或消费描述</span><input id="edit-merchant" name="merchant" required maxlength="120" aria-describedby="error-merchant"><span id="error-merchant" class="field-error"></span></label>
       <div class="edit-grid">
-        <label for="edit-date">消费日期<input id="edit-date" name="transaction_date" type="date" required aria-describedby="error-transaction_date"><span id="error-transaction_date" class="field-error"></span></label>
-        <label for="edit-amount">金额<input id="edit-amount" name="amount" inputmode="decimal" required pattern="[0-9]+(\.[0-9]{1,2})?" aria-describedby="error-amount"><span id="error-amount" class="field-error"></span></label>
-        <label for="edit-currency">币种<input id="edit-currency" name="currency" required minlength="3" maxlength="3" pattern="[A-Za-z]{3}" aria-describedby="error-currency"><span id="error-currency" class="field-error"></span></label>
-        <label for="edit-category">分类<select id="edit-category" name="category" required aria-describedby="error-category"></select><span id="error-category" class="field-error"></span></label>
+        <label for="edit-date"><span data-i18n="消费日期">消费日期</span><input id="edit-date" name="transaction_date" type="date" required aria-describedby="error-transaction_date"><span id="error-transaction_date" class="field-error"></span></label>
+        <label for="edit-amount"><span data-i18n="金额">金额</span><input id="edit-amount" name="amount" inputmode="decimal" required pattern="[0-9]+(\.[0-9]{1,2})?" aria-describedby="error-amount"><span id="error-amount" class="field-error"></span></label>
+        <label for="edit-currency"><span data-i18n="币种">币种</span><input id="edit-currency" name="currency" required minlength="3" maxlength="3" pattern="[A-Za-z]{3}" aria-describedby="error-currency"><span id="error-currency" class="field-error"></span></label>
+        <label for="edit-category"><span data-i18n="分类">分类</span><select id="edit-category" name="category" required aria-describedby="error-category"></select><span id="error-category" class="field-error"></span></label>
       </div>
-      <label for="edit-account">付款账户<input id="edit-account" name="payment_account" list="account-suggestions" maxlength="80" placeholder="例如 SG UOB 信用卡" aria-describedby="error-payment_account"><span id="error-payment_account" class="field-error"></span></label><datalist id="account-suggestions"></datalist>
-      <label for="edit-note">备注<textarea id="edit-note" name="note" rows="2" maxlength="300" aria-describedby="error-note"></textarea><span id="error-note" class="field-error"></span></label>
-      <label for="edit-personal" class="check-label"><input id="edit-personal" name="is_personal" type="checkbox" aria-describedby="personal-help error-is_personal">计入我的个人支出</label><p id="personal-help" class="muted">取消后保留记录用于对账，但不计入个人支出及分类统计。</p><span id="error-is_personal" class="field-error"></span>
-      <div class="original-message"><span class="muted">原始来源描述（保留不变）</span><p id="edit-source"></p></div>
-      <div class="dialog-actions"><button id="edit-save" class="primary" type="submit">保存修改</button><button id="edit-cancel" class="quiet" type="button">返回详情</button></div>
+      <label for="edit-account"><span data-i18n="付款账户">付款账户</span><input id="edit-account" name="payment_account" list="account-suggestions" maxlength="80" placeholder="例如 SG UOB 信用卡" data-i18n-placeholder="例如 SG UOB 信用卡" aria-describedby="error-payment_account"><span id="error-payment_account" class="field-error"></span></label><datalist id="account-suggestions"></datalist>
+      <label for="edit-note"><span data-i18n="备注">备注</span><textarea id="edit-note" name="note" rows="2" maxlength="300" aria-describedby="error-note"></textarea><span id="error-note" class="field-error"></span></label>
+      <label for="edit-personal" class="check-label"><input id="edit-personal" name="is_personal" type="checkbox" aria-describedby="personal-help error-is_personal"><span data-i18n="计入我的个人支出">计入我的个人支出</span></label><p id="personal-help" class="muted"><span data-i18n="取消后保留记录用于对账，但不计入个人支出及分类统计。">取消后保留记录用于对账，但不计入个人支出及分类统计。</span></p><span id="error-is_personal" class="field-error"></span>
+      <div class="original-message"><span class="muted"><span data-i18n="原始来源描述（保留不变）">原始来源描述（保留不变）</span></span><p id="edit-source"></p></div>
+      <div class="dialog-actions"><button id="edit-save" class="primary" type="submit"><span data-i18n="保存修改">保存修改</span></button><button id="edit-cancel" class="quiet" type="button"><span data-i18n="返回详情">返回详情</span></button></div>
     </form>
     <p id="detail-error" class="form-error" role="alert"></p>
-    <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button">修改记录</button><button id="delete-record" class="quiet" type="button" hidden>删除记录</button><button id="restore-record" type="button" hidden>恢复记录</button><button id="confirm-record" class="primary" type="button" hidden>确认入账</button><button id="cancel-record" class="quiet" type="button" hidden>取消草稿</button></div>
-    <section id="review-check" class="notice" hidden><p id="review-message"></p><div class="dialog-actions"><button id="review-submit" class="primary" type="button">确定</button><button id="review-back" class="quiet" type="button">返回</button></div></section>
-    <p class="detail-note">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。删除记录可在「已删除」中恢复。</p>
+    <div id="detail-actions" class="dialog-actions"><button id="edit-start" type="button"><span data-i18n="修改记录">修改记录</span></button><button id="delete-record" class="quiet" type="button" hidden><span data-i18n="删除记录">删除记录</span></button><button id="restore-record" type="button" hidden><span data-i18n="恢复记录">恢复记录</span></button><button id="confirm-record" class="primary" type="button" hidden><span data-i18n="确认入账">确认入账</span></button><button id="cancel-record" class="quiet" type="button" hidden><span data-i18n="取消草稿">取消草稿</span></button></div>
+    <section id="review-check" class="notice" hidden><p id="review-message"></p><div class="dialog-actions"><button id="review-submit" class="primary" type="button"><span data-i18n="确定">确定</span></button><button id="review-back" class="quiet" type="button"><span data-i18n="返回">返回</span></button></div></section>
+    <p class="detail-note"><span data-i18n="修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。删除记录可在「已删除」中恢复。">修改会保留原始描述并记录历史。保存草稿后，仍需确认入账。删除记录可在「已删除」中恢复。</span></p>
   </dialog>
   <dialog id="statement-confirm" aria-labelledby="statement-confirm-title">
     <h2 id="statement-confirm-title">确认这笔账单明细</h2>

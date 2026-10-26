@@ -117,6 +117,10 @@ def test_http_does_not_serve_files_or_allow_cross_site_access(ledger):
             assert client.post("/api/ledger", json={}).status_code == 403
             assert "textContent" in client.get("/app.js").text
             assert "innerHTML" not in client.get("/app.js").text
+            translations = client.get('/i18n.js')
+            assert translations.status_code == 200
+            assert translations.headers['content-type'].startswith('text/javascript')
+            assert 'FinanceI18n' in translations.text
             flow = client.get("/statement-flow.js")
             assert flow.status_code == 200
             assert "StatementFlow" in flow.text
